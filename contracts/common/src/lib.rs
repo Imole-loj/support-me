@@ -174,6 +174,18 @@ pub enum AdminAction {
     SetThreshold(u32),
     Pause,
     Unpause,
+    /// Adds a token to the donation contract's allowlist (#284). Routed
+    /// through the proposal pipeline so a single key on a multisig
+    /// deployment cannot unilaterally allowlist an arbitrary token.
+    AddAllowedToken(Address),
+    /// Removes a token from the donation contract's allowlist (#284).
+    RemoveAllowedToken(Address),
+    /// Sets the minimum donation guardrail, in the token's smallest unit
+    /// (#284). Zero disables the floor.
+    SetMinDonation(i128),
+    /// Sets the maximum donation guardrail, in the token's smallest unit
+    /// (#284). Zero disables the ceiling.
+    SetMaxDonation(i128),
 }
 
 /// Proposal for sensitive multi-signature administrative changes.

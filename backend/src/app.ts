@@ -20,7 +20,14 @@ import { checkSorobanRpc } from "./services/sorobanHealth";
 import { executorHealth } from "./services/executorHealth";
 import { eventListenerHealth } from "./services/eventListenerHealth";
 import { networkReset } from "./services/networkReset";
-import { getAllowedOrigins } from "./config";
+import { getAllowedOrigins, getRateLimitConfig } from "./config";
+import { TtlCache } from "./services/ttlCache";
+import { RateLimiter } from "./services/rateLimiter";
+import { clientIp, rateLimit } from "./middleware/rateLimit";
+
+const rateLimits = getRateLimitConfig();
+export const sorobanRpcCache = new TtlCache<{ status: "ok" | "down"; latencyMs?: number }>(5_000);
+export const healthIpLimiter = new RateLimiter(rateLimits.health.ipMax, rateLimits.health.windowMs);
 
 const app = express();
 
@@ -87,8 +94,13 @@ app.use(express.json());
 // SEO routes (standard paths: /sitemap.xml, /robots.txt)
 app.use("/", seoRouter);
 
-app.get("/health", async (req, res) => {
-  const sorobanRpc = await checkSorobanRpc();
+// Cheap liveness probe that never touches dependencies (#373)
+app.get("/health/live", (_req, res) => {
+  return res.json({ status: "ok" });
+});
+
+app.get("/health", rateLimit(healthIpLimiter, clientIp, "health probe"), async (req, res) => {
+  const sorobanRpc = await sorobanRpcCache.getOrSet("rpc", () => checkSorobanRpc());
   const subscriptionExecutor = executorHealth.getHealth();
   const eventListener = eventListenerHealth.getHealth();
   const network = networkReset.getState();

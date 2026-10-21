@@ -46,6 +46,10 @@ export interface RateLimitConfig {
     ipMax: number;
     accountMax: number;
   };
+  health: {
+    windowMs: number;
+    ipMax: number;
+  };
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {
@@ -81,6 +85,10 @@ export function getRateLimitConfig(): RateLimitConfig {
       windowMs: positiveIntegerEnv("MAGIC_LINK_RATE_LIMIT_WINDOW_MS", 15 * 60_000),
       ipMax: positiveIntegerEnv("MAGIC_LINK_RATE_LIMIT_IP_MAX", 30),
       accountMax: positiveIntegerEnv("MAGIC_LINK_RATE_LIMIT_ACCOUNT_MAX", 5),
+    },
+    health: {
+      windowMs: positiveIntegerEnv("HEALTH_RATE_LIMIT_WINDOW_MS", 60_000),
+      ipMax: positiveIntegerEnv("HEALTH_RATE_LIMIT_IP_MAX", 60),
     },
   };
 }

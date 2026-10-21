@@ -10,7 +10,7 @@ import {
   updateGoalSchema,
   usernameParamSchema,
 } from "../schemas/goals";
-import { computePeriodEnd } from "../services/goalService";
+import { computePeriodEnd, formatGoalAmounts } from "../services/goalService";
 import { NotFoundError, UnauthorizedError } from "../errors/AppError";
 
 const router = Router();
@@ -35,7 +35,7 @@ router.get(
       orderBy: { createdAt: "asc" },
     });
 
-    return res.json({ items: goals });
+    return res.json({ items: goals.map(formatGoalAmounts) });
   })
 );
 
@@ -72,7 +72,7 @@ router.post(
       },
     });
 
-    return res.status(201).json(goal);
+    return res.status(201).json(formatGoalAmounts(goal));
   })
 );
 
@@ -122,7 +122,7 @@ router.put(
       },
     });
 
-    return res.json(goal);
+    return res.json(formatGoalAmounts(goal));
   })
 );
 

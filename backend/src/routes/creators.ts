@@ -32,6 +32,15 @@ const router = Router();
 // Exported so tests can reset it between cases.
 export const creatorProfileCache = new TtlCache<Creator>(5 * 60 * 1000);
 
+export function formatCreator<T extends { presetAmounts?: any }>(creator: T): T {
+  if (!creator) return creator;
+  if (!Array.isArray(creator.presetAmounts)) return creator;
+  return {
+    ...creator,
+    presetAmounts: creator.presetAmounts.map((p: any) => toAmount(p)),
+  };
+}
+
 interface LeaderboardEntry {
   rank: number;
   total: number;
@@ -136,7 +145,7 @@ router.get(
     ]);
 
     return res.json({
-      items: creators,
+      items: creators.map(formatCreator),
       pagination: {
         page,
         limit,
@@ -160,7 +169,7 @@ router.get(
       throw new NotFoundError("Creator not found");
     }
 
-    return res.json(creator);
+    return res.json(formatCreator(creator));
   })
 );
 
@@ -271,7 +280,7 @@ router.get(
         return profile;
       });
 
-      return res.json(creator);
+      return res.json(formatCreator(creator));
     } catch (error) {
       // If cache fails, fall back to direct DB read
       if (error instanceof NotFoundError) {
@@ -285,7 +294,7 @@ router.get(
         throw new NotFoundError("Creator not found");
       }
 
-      return res.json(creator);
+      return res.json(formatCreator(creator));
     }
   })
 );
@@ -340,7 +349,7 @@ router.post(
       throw err;
     }
 
-    return res.status(201).json(creator);
+    return res.status(201).json(formatCreator(creator));
   })
 );
 
@@ -388,7 +397,7 @@ router.put(
     // Invalidate cache when profile is updated
     creatorProfileCache.clear();
 
-    return res.json(creator);
+    return res.json(formatCreator(creator));
   })
 );
 
@@ -420,7 +429,7 @@ router.patch(
 
     creatorProfileCache.clear();
 
-    return res.json(creator);
+    return res.json(formatCreator(creator));
   })
 );
 

@@ -32,8 +32,8 @@ type FakeGoal = {
   id: number;
   creatorId?: number;
   currency?: string;
-  currentAmount: number;
-  targetAmount?: number;
+  currentAmount: number | Prisma.Decimal;
+  targetAmount?: number | Prisma.Decimal;
   recurring?: boolean;
   status?: string;
   recurrenceInterval?: string | null;
@@ -49,14 +49,14 @@ type GoalWhere = {
   id?: number;
   status?: string;
   recurring?: boolean;
-  currentAmount?: { lt?: number };
+  currentAmount?: { lt?: number | Prisma.Decimal };
   currentPeriodEnd?: { lte?: Date };
   creatorId?: number;
   currency?: string;
 };
 
 type GoalData = {
-  currentAmount?: number | { increment?: number };
+  currentAmount?: number | Prisma.Decimal | { increment?: number | Prisma.Decimal };
   status?: string;
   currentPeriodEnd?: Date;
 };
@@ -65,7 +65,11 @@ function rowMatches(row: FakeGoal, where: GoalWhere): boolean {
   if (where.id !== undefined && row.id !== where.id) return false;
   if (where.status !== undefined && row.status !== where.status) return false;
   if (where.recurring !== undefined && row.recurring !== where.recurring) return false;
-  if (where.currentAmount?.lt !== undefined && !(row.currentAmount < where.currentAmount.lt)) return false;
+  if (where.currentAmount?.lt !== undefined) {
+    const cur = new Prisma.Decimal(row.currentAmount);
+    const limit = new Prisma.Decimal(where.currentAmount.lt);
+    if (!cur.lt(limit)) return false;
+  }
   if (
     where.currentPeriodEnd?.lte !== undefined &&
     !(row.currentPeriodEnd != null && row.currentPeriodEnd <= where.currentPeriodEnd.lte)
@@ -75,8 +79,14 @@ function rowMatches(row: FakeGoal, where: GoalWhere): boolean {
 }
 
 function applyData(row: FakeGoal, data: GoalData): void {
-  if (typeof data.currentAmount === "number") row.currentAmount = data.currentAmount;
-  else if (data.currentAmount?.increment !== undefined) row.currentAmount += data.currentAmount.increment;
+  if (data.currentAmount !== undefined) {
+    if (typeof data.currentAmount === "object" && "increment" in data.currentAmount) {
+      const inc = data.currentAmount.increment!;
+      row.currentAmount = new Prisma.Decimal(row.currentAmount).add(new Prisma.Decimal(inc)).toNumber();
+    } else {
+      row.currentAmount = new Prisma.Decimal(data.currentAmount).toNumber();
+    }
+  }
   if (data.status !== undefined) row.status = data.status;
   if (data.currentPeriodEnd !== undefined) row.currentPeriodEnd = data.currentPeriodEnd;
 }
@@ -459,5 +469,32 @@ describe("resetDueGoals", () => {
     expect(mockedPrisma.goal.updateMany).toHaveBeenCalledTimes(1);
     expect(rows.get(1)!.currentAmount).toBe(42);
     expect(rows.get(1)!.currentPeriodEnd).toEqual(alreadyResetPeriodEnd);
+  });
+
+  it("accumulates small donations using decimal arithmetic: 0.1 ten times reaches a goal of 1 and marks it complete (#372)", async () => {
+    const rows = createGoalStore([
+      {
+        id: 1,
+        creatorId: 1,
+        currency: "XLM",
+        currentAmount: new Prisma.Decimal(0),
+        targetAmount: new Prisma.Decimal(1),
+        recurring: false,
+        status: "ACTIVE",
+      },
+    ]);
+
+    let finalCompletedGoal: any = null;
+    for (let i = 0; i < 10; i++) {
+      const reached = await applyDonationToGoals(fakeTransactionClient(), 1, "XLM", 0.1);
+      if (reached.length > 0) {
+        finalCompletedGoal = reached[0];
+      }
+    }
+
+    expect(rows.get(1)!.currentAmount).toBe(1);
+    expect(rows.get(1)!.status).toBe("COMPLETED");
+    expect(finalCompletedGoal).not.toBeNull();
+    expect(finalCompletedGoal.status).toBe("COMPLETED");
   });
 });

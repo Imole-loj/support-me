@@ -1018,12 +1018,19 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         onChange={(e) => setDonationMessage(e.target.value)}
                         maxLength={MAX_MEMO_LENGTH}
                         placeholder={t('messagePlaceholder')}
-                        className="input-brutal text-sm"
+                        disabled={recurring}
+                        className="input-brutal text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         rows={3}
                       />
-                      <p className="text-xs text-muted mt-1 font-medium">
-                        {t('characterCount', { count: donationMessage.length, max: MAX_MEMO_LENGTH })}
-                      </p>
+                      {recurring ? (
+                        <p className="text-xs text-muted mt-1 font-medium" data-testid="recurring-message-hint">
+                          {t('recurringMessageHint')}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted mt-1 font-medium">
+                          {t('characterCount', { count: donationMessage.length, max: MAX_MEMO_LENGTH })}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between gap-3">

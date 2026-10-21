@@ -44,6 +44,7 @@
     "messageLabel": "Mensaje (opcional)",
     "messagePlaceholder": "¡Gracias por tu trabajo!",
     "characterCount": "{count}/{max}",
+    "recurringMessageHint": "Los mensajes solo se aplican a propinas únicas.",
     "makeRecurring": "Hacerlo recurrente",
     "intervalWeekly": "Semanal",
     "intervalMonthly": "Mensual",

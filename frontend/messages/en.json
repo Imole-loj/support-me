@@ -44,6 +44,7 @@
     "messageLabel": "Message (Optional)",
     "messagePlaceholder": "Thanks for your work!",
     "characterCount": "{count}/{max}",
+    "recurringMessageHint": "Messages apply to one-time tips only.",
     "makeRecurring": "Make it recurring",
     "intervalWeekly": "Weekly",
     "intervalMonthly": "Monthly",

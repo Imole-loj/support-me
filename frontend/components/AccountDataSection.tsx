@@ -5,6 +5,8 @@ import { notify } from '@/lib/notify';
 import { useAuth } from '@/context/AuthContext';
 import { API_URL } from '@/lib/api';
 import { fetchWithRetry, isNetworkError } from '@/lib/network';
+import { useAuthFetch } from '@/lib/useAuthFetch';
+import { isSessionExpiredError } from '@/lib/authFetch';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 /**
@@ -15,6 +17,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
  */
 export function AccountDataSection() {
   const { token, logout } = useAuth();
+  const authFetch = useAuthFetch();
   const [exporting, setExporting] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmText, setConfirmText] = useState('');
@@ -24,9 +27,13 @@ export function AccountDataSection() {
     if (!token) return;
     setExporting(true);
     try {
-      const res = await fetchWithRetry(`${API_URL}/api/account/export`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const res = await authFetch(
+        `${API_URL}/api/account/export`,
+        {},
+        // Keep the connection-failure handling (toast + retry); authFetch
+        // adds the 401 treatment on top (#246).
+        { fetchImpl: fetchWithRetry }
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || 'Export failed');
@@ -51,7 +58,8 @@ export function AccountDataSection() {
         description: 'A JSON file with your profile, donations, subscriptions and withdrawals.',
       });
     } catch (err) {
-      if (isNetworkError(err)) return;
+      // An expired token already signed the user out with its own toast (#246).
+      if (isNetworkError(err) || isSessionExpiredError(err)) return;
       notify.error('Could not export your data', err);
     } finally {
       setExporting(false);
@@ -62,11 +70,17 @@ export function AccountDataSection() {
     if (!token || confirmText !== 'DELETE') return;
     setDeleting(true);
     try {
-      const res = await fetchWithRetry(`${API_URL}/api/account/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ confirm: confirmText }),
-      });
+      const res = await authFetch(
+        `${API_URL}/api/account/delete`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: confirmText }),
+        },
+        // Keep the connection-failure handling (toast + retry); authFetch
+        // adds the 401 treatment on top (#246).
+        { fetchImpl: fetchWithRetry }
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || 'Deletion failed');
@@ -80,7 +94,8 @@ export function AccountDataSection() {
       setConfirmText('');
       logout();
     } catch (err) {
-      if (isNetworkError(err)) return;
+      // An expired token already signed the user out with its own toast (#246).
+      if (isNetworkError(err) || isSessionExpiredError(err)) return;
       notify.error('Could not delete your account', err);
     } finally {
       setDeleting(false);

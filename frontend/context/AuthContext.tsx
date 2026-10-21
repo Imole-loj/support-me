@@ -1,8 +1,9 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { connectWallet, disconnectWallet, signMessage } from '@/lib/wallet';
 import { API_URL } from '@/lib/api';
+import { isTokenExpired } from '@/lib/authFetch';
 
 interface User {
   id: number;
@@ -49,14 +50,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('authUser');
     if (savedToken && savedUser) {
-      try {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring session state from localStorage on mount, see comment above
-        setToken(savedToken);
-        setUser(JSON.parse(savedUser));
-      } catch {
-        // Clear invalid stored data
+      if (isTokenExpired(savedToken)) {
+        // The stored JWT already expired (#246): drop it instead of restoring
+        // a session whose very first API call would 401, so a reload lands on
+        // the signed-out state rather than a page of failing requests.
         localStorage.removeItem('authToken');
         localStorage.removeItem('authUser');
+      } else {
+        try {
+          // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring session state from localStorage on mount, see comment above
+          setToken(savedToken);
+          setUser(JSON.parse(savedUser));
+        } catch {
+          // Clear invalid stored data
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('authUser');
+        }
       }
     }
     setLoading(false);
@@ -158,13 +167,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return persistSession(data);
   };
 
-  const logout = () => {
+  // Memoized so consumers built on it (useAuthFetch) keep a stable identity
+  // across renders — a fresh closure per render would re-run their effects.
+  const logout = useCallback(() => {
     setUser(null);
     setToken(null);
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
     disconnectWallet().catch(() => {});
-  };
+  }, []);
 
   return (
     <AuthContext.Provider

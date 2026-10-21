@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { API_URL } from '@/lib/api';
+import { useAuthFetch } from '@/lib/useAuthFetch';
 import type { ProfileTheme } from '@/lib/theme';
 
 interface Creator {
@@ -32,6 +33,7 @@ const CreatorContext = createContext<CreatorContextType | undefined>(undefined);
 
 export function CreatorProvider({ children }: { children: ReactNode }) {
   const { user, token } = useAuth();
+  const authFetch = useAuthFetch();
   const [creator, setCreator] = useState<Creator | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchKey, setFetchKey] = useState(0);
@@ -40,13 +42,19 @@ export function CreatorProvider({ children }: { children: ReactNode }) {
     let active = true;
     const fetchCreator = async () => {
       if (!user || !token) {
-        if (active) setLoading(false);
+        // Signed out (including signed out by a 401, #246): drop any stale
+        // profile so no page keeps rendering signed-in data for a session
+        // that no longer exists.
+        if (active) {
+          setCreator(null);
+          setLoading(false);
+        }
         return;
       }
       try {
-        const res = await fetch(`${API_URL}/api/creators/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        // authFetch signs the user out and throws SessionExpiredError on a
+        // 401 (#246), so the catch below never masks an expired token.
+        const res = await authFetch(`${API_URL}/api/creators/me`);
         if (res.status === 404) {
           if (active) setCreator(null);
           return;
@@ -61,7 +69,7 @@ export function CreatorProvider({ children }: { children: ReactNode }) {
     };
     fetchCreator();
     return () => { active = false; };
-  }, [user, token, fetchKey]);
+  }, [user, token, fetchKey, authFetch]);
 
   const invalidate = useCallback(() => setFetchKey((k) => k + 1), []);
 

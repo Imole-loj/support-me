@@ -17,6 +17,13 @@ function jsonResponse(body: unknown, ok = true) {
   return { ok, json: async () => body } as Response;
 }
 
+/** Builds a structurally-valid JWT with the given claims (#246). */
+function makeJwt(claims: Record<string, unknown>) {
+  const encode = (obj: unknown) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode(claims)}.signature`;
+}
+
 describe('AuthContext', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -40,6 +47,32 @@ describe('AuthContext', () => {
 
     expect(result.current.token).toBe('saved-token');
     expect(result.current.user).toEqual({ id: 1, walletAddress: 'GABC' });
+  });
+
+  it('restores a session whose stored JWT is still valid', async () => {
+    const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 * 60 });
+    localStorage.setItem('authToken', token);
+    localStorage.setItem('authUser', JSON.stringify({ id: 1, walletAddress: 'GABC' }));
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.token).toBe(token);
+    expect(result.current.user).toEqual({ id: 1, walletAddress: 'GABC' });
+  });
+
+  it('drops an expired stored token instead of restoring the session (#246)', async () => {
+    const expiredToken = makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+    localStorage.setItem('authToken', expiredToken);
+    localStorage.setItem('authUser', JSON.stringify({ id: 1, walletAddress: 'GABC' }));
+
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.token).toBeNull();
+    expect(result.current.user).toBeNull();
+    expect(localStorage.getItem('authToken')).toBeNull();
+    expect(localStorage.getItem('authUser')).toBeNull();
   });
 
   it('logs in with a wallet and persists the session', async () => {

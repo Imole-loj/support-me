@@ -11,6 +11,8 @@ import { cancelSubscription } from '@/lib/contract';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { API_URL } from '@/lib/api';
 import { fetchWithRetry, isNetworkError } from '@/lib/network';
+import { useAuthFetch } from '@/lib/useAuthFetch';
+import { isSessionExpiredError } from '@/lib/authFetch';
 import { describeChargeFailure } from '@/lib/failures';
 
 interface Subscription {
@@ -37,7 +39,8 @@ function formatInterval(intervalSecs: number): string {
 }
 
 function SubscriptionsList() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
+  const authFetch = useAuthFetch();
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
@@ -70,11 +73,17 @@ function SubscriptionsList() {
 
       // The on-chain cancel (which also revokes the allowance) is what stops
       // charges; this call only updates our records, so a failure here is a
-      // warning rather than an error.
-      const recordRes = await fetchWithRetry(`${API_URL}/api/subscriptions/${subscription.id}/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => null);
+      // warning rather than an error. An expired token (#246) is different:
+      // authFetch has already signed the user out and toasted, so it
+      // propagates to the catch below instead of masquerading as a warning.
+      const recordRes = await authFetch(
+        `${API_URL}/api/subscriptions/${subscription.id}/cancel`,
+        { method: 'POST' },
+        { fetchImpl: fetchWithRetry }
+      ).catch((err) => {
+        if (isSessionExpiredError(err)) throw err;
+        return null;
+      });
 
       setSubscriptions((prev) =>
         prev.map((s) => (s.id === subscription.id ? { ...s, active: false } : s))
@@ -87,6 +96,8 @@ function SubscriptionsList() {
         });
       }
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       const message = (err as Error)?.message || '';
       // Detect testnet reset errors (contract/subscription not found)
       if (/not found|no such contract|entry not found|missing contract/i.test(message)) {
@@ -104,10 +115,11 @@ function SubscriptionsList() {
 
   const handleRemoveStaleRecord = async (subscription: Subscription) => {
     try {
-      const recordRes = await fetchWithRetry(`${API_URL}/api/subscriptions/${subscription.id}/cancel`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const recordRes = await authFetch(
+        `${API_URL}/api/subscriptions/${subscription.id}/cancel`,
+        { method: 'POST' },
+        { fetchImpl: fetchWithRetry }
+      );
       if (recordRes?.ok) {
         setSubscriptions((prev) => prev.filter((s) => s.id !== subscription.id));
         notify.success('Stale subscription removed');
@@ -115,6 +127,8 @@ function SubscriptionsList() {
         notify.error('Could not remove subscription');
       }
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       notify.error('Could not remove subscription', err);
     } finally {
       setSubscriptionToRemove(null);

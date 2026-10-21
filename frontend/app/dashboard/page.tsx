@@ -20,6 +20,8 @@ import { DashboardStats, type CreatorStats } from '@/components/DashboardStats';
 import { usePrices } from '@/lib/usePrices';
 import { formatUsd } from '@/lib/prices';
 import { API_URL } from '@/lib/api';
+import { useAuthFetch } from '@/lib/useAuthFetch';
+import { isSessionExpiredError } from '@/lib/authFetch';
 
 const STELLAR_NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK || 'testnet';
 const explorerTxUrl = (hash: string) =>
@@ -56,6 +58,7 @@ type ActivityItem =
 
 export default function DashboardPage() {
   const { user, token } = useAuth();
+  const authFetch = useAuthFetch();
   const { creator, loading } = useCreator();
   const [donations, setDonations] = useState<Donation[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
@@ -93,12 +96,8 @@ export default function DashboardPage() {
     const fetchData = async () => {
       try {
         const [resDonations, resWithdrawals] = await Promise.all([
-          fetch(`${API_URL}/api/donations?creatorUsername=${encodeURIComponent(creator.username)}&page=1&limit=20`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          }),
-          fetch(`${API_URL}/api/withdrawals?creatorUsername=${creator.username}`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          }),
+          authFetch(`${API_URL}/api/donations?creatorUsername=${encodeURIComponent(creator.username)}&page=1&limit=20`),
+          authFetch(`${API_URL}/api/withdrawals?creatorUsername=${creator.username}`),
         ]);
 
         if (resDonations.ok) {
@@ -122,12 +121,14 @@ export default function DashboardPage() {
           setWithdrawals(Array.isArray(withdrawalsData) ? withdrawalsData : []);
         }
       } catch (err) {
+        // An expired token already signed the user out with its own toast (#246).
+        if (isSessionExpiredError(err)) return;
         setError((err as Error).message);
       }
     };
 
     fetchData();
-  }, [user, token, creator]);
+  }, [user, token, creator, authFetch]);
 
   const [exporting, setExporting] = useState(false);
 
@@ -141,9 +142,8 @@ export default function DashboardPage() {
       const pageSize = 100;
       const maxPages = 200;
       for (let page = 1; page <= maxPages; page++) {
-        const response = await fetch(
-          `${API_URL}/api/donations?creatorUsername=${encodeURIComponent(creator.username)}&page=${page}&limit=${pageSize}`,
-          { headers: { Authorization: `Bearer ${token}` } }
+        const response = await authFetch(
+          `${API_URL}/api/donations?creatorUsername=${encodeURIComponent(creator.username)}&page=${page}&limit=${pageSize}`
         );
         if (!response.ok) throw new Error('The server returned an error. Please try again.');
         const data = await response.json();
@@ -153,6 +153,8 @@ export default function DashboardPage() {
       downloadCsv(donationsCsvFilename(creator.username), donationsToCsv(all));
       notify.success(`Exported ${all.length} donation${all.length === 1 ? '' : 's'}`);
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       notify.error('Could not export donations', err);
     } finally {
       setExporting(false);
@@ -168,9 +170,8 @@ export default function DashboardPage() {
     }
     try {
       const nextPage = donationPage + 1;
-      const response = await fetch(
-        `${API_URL}/api/donations?creatorUsername=${encodeURIComponent(creator.username)}&page=${nextPage}&limit=20`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
+      const response = await authFetch(
+        `${API_URL}/api/donations?creatorUsername=${encodeURIComponent(creator.username)}&page=${nextPage}&limit=20`
       );
       if (!response.ok) throw new Error('The server returned an error. Please try again.');
       const data = await response.json();
@@ -194,6 +195,8 @@ export default function DashboardPage() {
         setHasMoreDonations(false);
       }
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       const msg = err instanceof Error ? err.message : 'Could not load older donations';
       setLoadMoreError(msg);
       notify.error('Could not load more donations', err);
@@ -235,20 +238,19 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!token || !creator) return;
     let cancelled = false;
-    fetch(`${API_URL}/api/creators/me/stats`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    authFetch(`${API_URL}/api/creators/me/stats`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (!cancelled && data && Array.isArray(data.currencies)) setStats(data);
       })
       .catch(() => {
         // Metrics are best-effort; the rest of the dashboard still works.
+        // (A 401 has already signed the user out before this catch, #246.)
       });
     return () => {
       cancelled = true;
     };
-  }, [token, creator, statsVersion]);
+  }, [token, creator, statsVersion, authFetch]);
 
   useEffect(() => {
     if (!creator?.walletAddress) return;

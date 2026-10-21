@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { notify } from '@/lib/notify';
 import { API_URL } from '@/lib/api';
+import { useAuthFetch } from '@/lib/useAuthFetch';
+import { isSessionExpiredError } from '@/lib/authFetch';
 import {
   DEFAULT_THEME,
   THEME_FONTS,
@@ -19,7 +21,6 @@ import {
 interface ThemeEditorProps {
   username: string;
   displayName: string;
-  token: string | null;
   /** The creator's saved theme; null means the default design. */
   initialTheme: ProfileTheme | null;
 }
@@ -29,7 +30,8 @@ interface ThemeEditorProps {
  * draft. Changes only reach the profile when saved, and saving is blocked
  * while the draft fails WCAG AA contrast.
  */
-export function ThemeEditor({ username, displayName, token, initialTheme }: ThemeEditorProps) {
+export function ThemeEditor({ username, displayName, initialTheme }: ThemeEditorProps) {
+  const authFetch = useAuthFetch();
   const [saved, setSaved] = useState<ProfileTheme>(initialTheme ?? DEFAULT_THEME);
   const [draft, setDraft] = useState<ProfileTheme>(saved);
   const [saving, setSaving] = useState(false);
@@ -44,12 +46,9 @@ export function ThemeEditor({ username, displayName, token, initialTheme }: Them
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/creators/${encodeURIComponent(username)}/theme`, {
+      const res = await authFetch(`${API_URL}/api/creators/${encodeURIComponent(username)}/theme`, {
         method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         // The default look is stored as null, so it keeps following the
         // visitor's light/dark mode instead of pinning the light palette.
         body: JSON.stringify({ theme: isDefaultTheme(draft) ? null : draft }),
@@ -61,6 +60,8 @@ export function ThemeEditor({ username, displayName, token, initialTheme }: Them
       setSaved(draft);
       notify.success('Theme saved.');
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       notify.error('Could not save theme', err);
     } finally {
       setSaving(false);

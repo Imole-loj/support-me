@@ -17,6 +17,8 @@ import { uploadAvatar } from '@/lib/upload';
 import { parsePresetAmounts } from '@/lib/donation';
 import { API_URL } from '@/lib/api';
 import { fetchWithRetry, isNetworkError } from '@/lib/network';
+import { useAuthFetch } from '@/lib/useAuthFetch';
+import { isSessionExpiredError } from '@/lib/authFetch';
 import { AccountDataSection } from '@/components/AccountDataSection';
 import { ThemeEditor } from '@/components/ThemeEditor';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -50,7 +52,8 @@ const parseGoalTarget = (value: string): number | null => {
 };
 
 export default function SettingsPage() {
-  const { user, token } = useAuth();
+  const { user } = useAuth();
+  const authFetch = useAuthFetch();
   const { creator, loading: creatorLoading, invalidate } = useCreator();
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -131,12 +134,9 @@ export default function SettingsPage() {
 
     setCreatingGoal(true);
     try {
-      const res = await fetch(`${API_URL}/api/goals/${creator.username}`, {
+      const res = await authFetch(`${API_URL}/api/goals/${creator.username}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: newGoalTitle.trim() || undefined,
           description: newGoalDescription.trim() || undefined,
@@ -158,6 +158,8 @@ export default function SettingsPage() {
       setNewGoalRecurring(false);
       notify.success('Goal created.');
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       notify.error('Could not create goal', err);
     } finally {
       setCreatingGoal(false);
@@ -184,12 +186,9 @@ export default function SettingsPage() {
 
     setSavingGoal(true);
     try {
-      const res = await fetch(`${API_URL}/api/goals/${goalDraft.id}`, {
+      const res = await authFetch(`${API_URL}/api/goals/${goalDraft.id}`, {
         method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         // null (not undefined) so emptying a field clears it server-side.
         body: JSON.stringify({
           title: goalDraft.title.trim() || null,
@@ -206,6 +205,8 @@ export default function SettingsPage() {
       setGoalDraft(null);
       notify.success('Goal updated.');
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       notify.error('Could not update goal', err);
     } finally {
       setSavingGoal(false);
@@ -215,9 +216,8 @@ export default function SettingsPage() {
   const handleDeleteGoal = async (goal: Goal) => {
     setDeletingGoal(true);
     try {
-      const res = await fetch(`${API_URL}/api/goals/${goal.id}`, {
+      const res = await authFetch(`${API_URL}/api/goals/${goal.id}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -226,6 +226,8 @@ export default function SettingsPage() {
       setGoals((prev) => prev.filter((g) => g.id !== goal.id));
       notify.success('Goal deleted.');
     } catch (err) {
+      // An expired token already signed the user out with its own toast (#246).
+      if (isSessionExpiredError(err)) return;
       notify.error('Could not delete goal', err);
     } finally {
       setDeletingGoal(false);
@@ -316,26 +318,29 @@ export default function SettingsPage() {
 
     setSaving(true);
     try {
-      const res = await fetchWithRetry(`${API_URL}/api/creators/${creator.username}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+      const res = await authFetch(
+        `${API_URL}/api/creators/${creator.username}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            displayName: displayName.trim() || undefined,
+            // Send the trimmed value (even when empty) so an emptied bio clears
+            // the saved one — dropping to undefined would leave the old text.
+            bio: bio.trim(),
+            avatarUrl: avatarUrl || undefined,
+            acceptsXlm,
+            acceptsUsdc,
+            acceptsUsdt,
+            donationGoal: goal,
+            presetAmounts,
+            socialLinks,
+          }),
         },
-        body: JSON.stringify({
-          displayName: displayName.trim() || undefined,
-          // Send the trimmed value (even when empty) so an emptied bio clears
-          // the saved one — dropping to undefined would leave the old text.
-          bio: bio.trim(),
-          avatarUrl: avatarUrl || undefined,
-          acceptsXlm,
-          acceptsUsdc,
-          acceptsUsdt,
-          donationGoal: goal,
-          presetAmounts,
-          socialLinks,
-        }),
-      });
+        // Keep the connection-failure handling (toast + retry) for this
+        // user-facing save; authFetch adds the 401 treatment on top (#246).
+        { fetchImpl: fetchWithRetry }
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || 'Failed to save changes');
@@ -344,7 +349,7 @@ export default function SettingsPage() {
       invalidate();
       notify.success('Settings saved.');
     } catch (err) {
-      if (isNetworkError(err)) return;
+      if (isNetworkError(err) || isSessionExpiredError(err)) return;
       notify.error('Could not save settings', err);
     } finally {
       setSaving(false);
@@ -799,7 +804,6 @@ export default function SettingsPage() {
             <ThemeEditor
               username={creator.username}
               displayName={creator.displayName || creator.username}
-              token={token}
               initialTheme={creator.theme ?? null}
             />
 

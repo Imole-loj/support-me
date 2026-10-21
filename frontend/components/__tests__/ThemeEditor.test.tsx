@@ -2,10 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ThemeEditor } from '@/components/ThemeEditor';
 import { notify } from '@/lib/notify';
+import { SESSION_EXPIRED_MESSAGE } from '@/lib/authFetch';
 import type { ProfileTheme } from '@/lib/theme';
 
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn() },
+}));
+
+// ThemeEditor gets its token through the auth session (#246), not a prop.
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => ({ token: 'test-token', logout: vi.fn() }),
 }));
 
 const savedTheme: ProfileTheme = {
@@ -16,7 +22,7 @@ const savedTheme: ProfileTheme = {
 };
 
 const renderEditor = (initialTheme: ProfileTheme | null = null) =>
-  render(<ThemeEditor username="alice" displayName="Alice" token="test-token" initialTheme={initialTheme} />);
+  render(<ThemeEditor username="alice" displayName="Alice" initialTheme={initialTheme} />);
 
 const patchBody = () => {
   const call = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === 'PATCH');
@@ -102,5 +108,20 @@ describe('ThemeEditor', () => {
 
     await waitFor(() => expect(notify.error).toHaveBeenCalledWith('Could not save theme', expect.any(Error)));
     expect(screen.getByRole('button', { name: 'Save theme' })).toBeEnabled();
+  });
+
+  it('shows the session-expired toast instead of a generic save error on a 401 (#246)', async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401, json: async () => ({}) } as Response);
+    renderEditor();
+
+    fireEvent.change(screen.getByLabelText('Layout'), { target: { value: 'centered' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save theme' }));
+
+    await waitFor(() =>
+      expect(notify.error).toHaveBeenCalledWith(SESSION_EXPIRED_MESSAGE, undefined, expect.anything())
+    );
+    // The misleading "Could not save theme" message must not appear — the
+    // session-expired toast already explained (and handled) the failure.
+    expect(notify.error).not.toHaveBeenCalledWith('Could not save theme', expect.anything());
   });
 });

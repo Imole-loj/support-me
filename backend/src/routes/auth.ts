@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { Router, Response } from 'express';
 import { randomBytes, createHash } from 'crypto';
 import { Keypair } from '@stellar/stellar-sdk';
 import prisma from '../prisma';
-import { generateToken } from '../middleware/auth';
+import { generateToken, authMiddleware, AuthRequest } from '../middleware/auth';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { validate } from '../middleware/validate';
 import {
@@ -21,6 +21,29 @@ import { clientIp, rateLimit } from '../middleware/rateLimit';
 import { getRateLimitConfig } from '../config';
 
 const router = Router();
+
+export const AUTH_COOKIE_NAME = 'token';
+
+export function setAuthCookie(res: Response, token: string): void {
+  const isProd = process.env.NODE_ENV === 'production';
+  res.cookie(AUTH_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/',
+  });
+}
+
+export function clearAuthCookie(res: Response): void {
+  const isProd = process.env.NODE_ENV === 'production';
+  res.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: 'lax',
+    path: '/',
+  });
+}
 
 const STELLAR_SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -136,6 +159,7 @@ router.post(
     const creator = await prisma.creator.findUnique({ where: { userId: user.id } });
 
     const token = generateToken(user.id, user.walletAddress);
+    setAuthCookie(res, token);
     return res.json({
       user: { id: user.id, walletAddress: user.walletAddress },
       token,
@@ -176,6 +200,7 @@ router.post(
     const { token } = req.body;
 
     const session = await verifyMagicLink(token);
+    setAuthCookie(res, session.token);
 
     return res.json(session);
   })
@@ -199,9 +224,26 @@ router.get(
     const { code, state } = req.query as unknown as { code: string; state: string };
 
     const session = await completeTwitterAuth(code, state);
+    setAuthCookie(res, session.token);
 
     return res.json(session);
   })
+);
+
+router.post(
+  '/logout',
+  (req, res) => {
+    clearAuthCookie(res);
+    return res.json({ message: 'Logged out successfully' });
+  }
+);
+
+router.get(
+  '/me',
+  authMiddleware,
+  (req: AuthRequest, res) => {
+    return res.json({ user: req.user });
+  }
 );
 
 export default router;

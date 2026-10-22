@@ -11,10 +11,15 @@ import { authMiddleware, generateToken, AuthRequest } from "../../middleware/aut
 
 const mockedPrisma = prisma as unknown as { user: { findUnique: jest.Mock } };
 
-function fakeRequest(token?: string): AuthRequest {
+function fakeRequest(token?: string, cookieToken?: string, method = "GET", origin?: string): AuthRequest {
   return {
-    headers: { authorization: token ? `Bearer ${token}` : undefined },
-  } as AuthRequest;
+    method,
+    headers: {
+      authorization: token ? `Bearer ${token}` : undefined,
+      cookie: cookieToken ? `token=${cookieToken}` : undefined,
+      origin,
+    },
+  } as unknown as AuthRequest;
 }
 
 function fakeResponse(): Response {
@@ -33,7 +38,7 @@ function runMiddleware(req: AuthRequest): Promise<unknown> {
   });
 }
 
-describe("authMiddleware (#270)", () => {
+describe("authMiddleware (#270, #366)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -58,6 +63,38 @@ describe("authMiddleware (#270)", () => {
     const result = await runMiddleware(req);
 
     expect(result).toBeUndefined(); // next() called with no error
+    expect(req.user).toMatchObject({ id: 101, walletAddress: null });
+  });
+
+  it("authenticates via httpOnly cookie (#366)", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({ deletedAt: null });
+    const token = generateToken(101, null);
+    const req = fakeRequest(undefined, token);
+
+    const result = await runMiddleware(req);
+
+    expect(result).toBeUndefined();
+    expect(req.user).toMatchObject({ id: 101, walletAddress: null });
+  });
+
+  it("blocks cookie-based state-changing requests with invalid origin (CSRF protection #366)", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({ deletedAt: null });
+    const token = generateToken(101, null);
+    const req = fakeRequest(undefined, token, "POST", "https://evil-attacker.example");
+
+    const error = await runMiddleware(req);
+
+    expect(error).toMatchObject({ statusCode: 401, message: "Cross-site request forgery blocked" });
+  });
+
+  it("allows cookie-based state-changing requests with valid origin (#366)", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({ deletedAt: null });
+    const token = generateToken(101, null);
+    const req = fakeRequest(undefined, token, "POST", "http://localhost:3000");
+
+    const result = await runMiddleware(req);
+
+    expect(result).toBeUndefined();
     expect(req.user).toMatchObject({ id: 101, walletAddress: null });
   });
 

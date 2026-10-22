@@ -76,7 +76,7 @@ export function WalletMenu() {
         aria-label={`Wallet menu (${accountLabel(user)})`}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="btn-brutal btn-brutal-white text-sm sm:text-base font-mono gap-1.5 min-h-[44px] flex items-center justify-center"
+        className="btn-brutal btn-brutal-white text-sm sm:text-base font-mono gap-1.5 min-h-[44px] flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-[var(--focus-ring)]"
       >
         {accountLabel(user)}
         <span className={`text-xs transition-transform ${open ? 'rotate-180' : ''}`}>▾</span>
@@ -100,7 +100,7 @@ export function WalletMenu() {
                   role="menuitem"
                   aria-current={active ? 'page' : undefined}
                   onClick={() => setOpen(false)}
-                  className={`w-full text-left px-3 py-2 rounded-lg font-bold transition-colors min-h-[44px] flex items-center gap-2 ${
+                  className={`w-full text-left px-3 py-2 rounded-lg font-bold transition-colors min-h-[44px] flex items-center gap-2 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] focus-visible:bg-accent-bg ${
                     active ? 'bg-accent-bg text-primary' : 'text-ink hover:bg-accent-bg'
                   }`}
                 >
@@ -117,7 +117,7 @@ export function WalletMenu() {
               logout();
               window.location.href = '/';
             }}
-            className="w-full text-left px-3 py-2 rounded-lg font-bold text-ink hover:bg-brand-pink transition-colors min-h-[44px] flex items-center"
+            className="w-full text-left px-3 py-2 rounded-lg font-bold text-ink hover:bg-brand-pink transition-colors min-h-[44px] flex items-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] focus-visible:bg-brand-pink"
           >
             Sign Out
           </button>

@@ -70,12 +70,15 @@ export function AppNav() {
               aria-label="Toggle mobile menu"
               aria-expanded={mobileMenuOpen}
               aria-controls="mobile-menu-drawer"
-              className="sm:hidden btn-brutal btn-brutal-white p-2 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="sm:hidden btn-brutal btn-brutal-white p-2 min-h-[44px] min-w-[44px] flex items-center justify-center focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
             >
               <HugeiconsIcon icon={mobileMenuOpen ? Cancel01Icon : Menu01Icon} size={22} strokeWidth={2} />
             </button>
             <div className="flex items-center gap-2">
-              <Link href="/app" className="text-xl sm:text-2xl font-extrabold font-display text-ink shrink-0 tracking-tight">
+              <Link
+                href="/app"
+                className="text-xl sm:text-2xl font-extrabold font-display text-ink shrink-0 tracking-tight rounded-lg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)]"
+              >
                 SupportMe
               </Link>
               <TestnetBadge />
@@ -90,7 +93,7 @@ export function AppNav() {
                   key={link.href}
                   href={link.href}
                   aria-current={active ? 'page' : undefined}
-                  className={`flex items-center gap-2 font-bold transition min-h-[44px] ${
+                  className={`flex items-center gap-2 font-bold transition min-h-[44px] px-2.5 py-1.5 rounded-lg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] ${
                     active ? 'text-primary underline underline-offset-4' : 'text-ink hover:text-primary'
                   }`}
                 >
@@ -118,7 +121,7 @@ export function AppNav() {
                   href={link.href}
                   onClick={() => setMobileMenuOpen(false)}
                   aria-current={active ? 'page' : undefined}
-                  className={`flex items-center gap-3 px-4 py-3 rounded border-2 border-ink font-bold text-base min-h-[44px] ${
+                  className={`flex items-center gap-3 px-4 py-3 rounded border-2 border-ink font-bold text-base min-h-[44px] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] ${
                     active ? 'bg-primary text-white' : 'bg-white text-ink hover:bg-accent-bg'
                   }`}
                 >
@@ -143,7 +146,7 @@ export function AppNav() {
               key={link.href}
               href={link.href}
               aria-current={active ? 'page' : undefined}
-              className={`flex flex-col items-center gap-1 font-bold text-xs transition-colors px-2 py-1 rounded-lg ${
+              className={`flex flex-col items-center gap-1 font-bold text-xs transition-colors px-2 py-1 rounded-lg focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus-ring)] ${
                 active ? 'text-primary bg-accent-bg border border-ink' : 'text-ink hover:text-primary'
               }`}
             >

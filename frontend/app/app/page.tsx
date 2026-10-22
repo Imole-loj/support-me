@@ -130,6 +130,16 @@ export default function AppHubPage() {
     return priced ? sum : null;
   })();
 
+  // Held assets (positive balance) that are missing price data, leading to a partial USD sum (#168).
+  const unpricedHeldAssets = useMemo(() => {
+    return assetCodes.filter((code) => {
+      const bal = balances[code];
+      return bal != null && parseFloat(bal) > 0 && (!prices || prices[code] == null);
+    });
+  }, [assetCodes, balances, prices]);
+
+  const isPartial = unpricedHeldAssets.length > 0;
+
   const copyProfile = async () => {
     if (!profileUrl) return;
     try {
@@ -210,21 +220,43 @@ export default function AppHubPage() {
             ) : balancesLoading ? (
               <Skeleton className="h-12 w-48" />
             ) : showUsd && totalUsd != null ? (
-              <p className="text-4xl sm:text-5xl font-extrabold text-ink tabular-nums">
-                ${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-baseline gap-3">
+                  <p className="text-4xl sm:text-5xl font-extrabold text-ink tabular-nums">
+                    {isPartial ? '≈ ' : ''}${totalUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  {isPartial && (
+                    <span
+                      data-testid="unpriced-caveat"
+                      className="text-xs font-bold px-2 py-0.5 rounded border border-ink/40 bg-brand-yellow text-ink shadow-brutal-sm"
+                    >
+                      + {unpricedHeldAssets.length} {unpricedHeldAssets.length === 1 ? 'asset' : 'assets'} not priced
+                    </span>
+                  )}
+                </div>
+                {isPartial && (
+                  <p className="text-xs font-semibold text-ink/70">
+                    Partial total — excludes {unpricedHeldAssets.join(', ')} due to missing price data.
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="space-y-1">
                 {assetCodes.map((code) => {
                   const bal = balances[code];
                   const usd = bal != null ? formatUsd(parseFloat(bal), code, prices) : null;
+                  const isUnpriced = bal != null && parseFloat(bal) > 0 && (!prices || prices[code] == null);
                   return (
                     <div key={code} className="flex items-baseline gap-3">
                       <span className="text-2xl sm:text-3xl font-extrabold text-ink tabular-nums">
                         {isUnfunded ? 'Not funded' : (bal != null ? Number(bal).toLocaleString() : '—')}
                       </span>
                       <span className="text-base font-bold text-ink/70">{code}</span>
-                      {usd && <span className="text-sm font-bold text-ink/60">{usd}</span>}
+                      {usd ? (
+                        <span className="text-sm font-bold text-ink/60">{usd}</span>
+                      ) : isUnpriced ? (
+                        <span className="text-xs font-semibold text-ink/50 italic">Price unavailable</span>
+                      ) : null}
                     </div>
                   );
                 })}

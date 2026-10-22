@@ -4,7 +4,7 @@
 
 SupportMe is a creator tipping and donation platform. This enables creators on Stellar to receive donations and tips easily through embedded widgets or shareable links.
 
-**Live demo**: [https://support-mee.vercel.app/](https://support-mee.vercel.app/) · **Demo video**: [Loom](https://www.loom.com/share/4468e89fd67745d39fb64033e6660b16) · **Testnet demo walkthrough**: [docs/testnet-demo-walkthrough.md](docs/testnet-demo-walkthrough.md)
+**Live demo**: [https://support-mee.vercel.app/](https://support-mee.vercel.app/) · **Demo video**: [Loom](https://www.loom.com/share/4468e89fd67745d39fb64033e6660b16) · **Testnet Quickstart**: [`docs/testnet-quickstart.md`](docs/testnet-quickstart.md) · **Testnet demo walkthrough**: [docs/testnet-demo-walkthrough.md](docs/testnet-demo-walkthrough.md)
 
 ## Architecture
 
@@ -65,15 +65,17 @@ talk to each other exclusively through cross-contract calls
   totals) and only accepts `record_donation` calls from the donation contract
   address it was initialized with.
 
-| Contract | Address | Source |
-| --- | --- | --- |
-| `donation` (v1) | [`CD6T563YCSYQHDMXC7VCFTKMWMXWHFHAU4NO7EAMFK57QLFI7SSXICYY`](https://stellar.expert/explorer/testnet/contract/CD6T563YCSYQHDMXC7VCFTKMWMXWHFHAU4NO7EAMFK57QLFI7SSXICYY) | [`contracts/donation/src/lib.rs`](contracts/donation/src/lib.rs) |
-| `creator-registry` (v1) | [`CCJL2GIWNNWECKGSEY2EXEGKBMN2LYJ3HVNJNZEO2AUXC4LRR7THG2U6`](https://stellar.expert/explorer/testnet/contract/CCJL2GIWNNWECKGSEY2EXEGKBMN2LYJ3HVNJNZEO2AUXC4LRR7THG2U6) | [`contracts/creator-registry/src/lib.rs`](contracts/creator-registry/src/lib.rs) |
-| `donation` (v2, adds recurring donations) | [`CAO2UABEB4A3EYFTWCMOSTFAUZ5FBSFRESQGWQHOLASZ3RHDCQHQG2LP`](https://stellar.expert/explorer/testnet/contract/CAO2UABEB4A3EYFTWCMOSTFAUZ5FBSFRESQGWQHOLASZ3RHDCQHQG2LP) | [`contracts/donation/src/lib.rs`](contracts/donation/src/lib.rs) |
-| `creator-registry` (v2) | [`CB6PH7KYI3UHAUNYIJVCV7CT6BOBROLSR4LSZB3WSGFOYOW6JFAF5NDU`](https://stellar.expert/explorer/testnet/contract/CB6PH7KYI3UHAUNYIJVCV7CT6BOBROLSR4LSZB3WSGFOYOW6JFAF5NDU) | [`contracts/creator-registry/src/lib.rs`](contracts/creator-registry/src/lib.rs) |
+| Contract                                  | Address                                                                                                                                                                 | Source                                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `donation` (v1)                           | [`CD6T563YCSYQHDMXC7VCFTKMWMXWHFHAU4NO7EAMFK57QLFI7SSXICYY`](https://stellar.expert/explorer/testnet/contract/CD6T563YCSYQHDMXC7VCFTKMWMXWHFHAU4NO7EAMFK57QLFI7SSXICYY) | [`contracts/donation/src/lib.rs`](contracts/donation/src/lib.rs)                 |
+| `creator-registry` (v1)                   | [`CCJL2GIWNNWECKGSEY2EXEGKBMN2LYJ3HVNJNZEO2AUXC4LRR7THG2U6`](https://stellar.expert/explorer/testnet/contract/CCJL2GIWNNWECKGSEY2EXEGKBMN2LYJ3HVNJNZEO2AUXC4LRR7THG2U6) | [`contracts/creator-registry/src/lib.rs`](contracts/creator-registry/src/lib.rs) |
+| `donation` (v2, adds recurring donations) | [`CAO2UABEB4A3EYFTWCMOSTFAUZ5FBSFRESQGWQHOLASZ3RHDCQHQG2LP`](https://stellar.expert/explorer/testnet/contract/CAO2UABEB4A3EYFTWCMOSTFAUZ5FBSFRESQGWQHOLASZ3RHDCQHQG2LP) | [`contracts/donation/src/lib.rs`](contracts/donation/src/lib.rs)                 |
+| `creator-registry` (v2)                   | [`CB6PH7KYI3UHAUNYIJVCV7CT6BOBROLSR4LSZB3WSGFOYOW6JFAF5NDU`](https://stellar.expert/explorer/testnet/contract/CB6PH7KYI3UHAUNYIJVCV7CT6BOBROLSR4LSZB3WSGFOYOW6JFAF5NDU) | [`contracts/creator-registry/src/lib.rs`](contracts/creator-registry/src/lib.rs) |
 
 For the build, testnet deployment, verification, and live-demo promotion
 checklist, see [`docs/contract-deploy-workflow.md`](docs/contract-deploy-workflow.md).
+For recovering contracts and environments after an SDF network wipe, see the
+[`docs/testnet-reset-runbook.md`](docs/testnet-reset-runbook.md).
 
 - **Network**: Stellar Testnet, RPC `https://soroban-testnet.stellar.org`
 - **Example transactions (v1)**:
@@ -516,7 +518,7 @@ NEXT_PUBLIC_ANCHOR_ASSET_CODE=USDC
 
 **Deploying to Vercel:** do not ship `localhost:8080` — `NEXT_PUBLIC_` vars
 are baked into the browser bundle at build time, so a visitor's browser would
-try to reach `localhost` on *their own* machine. For a hosted testnet demo
+try to reach `localhost` on _their own_ machine. For a hosted testnet demo
 with no infrastructure to run, set these in the Vercel project's environment
 variables and redeploy:
 
@@ -526,7 +528,7 @@ NEXT_PUBLIC_ANCHOR_ASSET_CODE=SRT
 ```
 
 This uses the SDF public reference anchor (settles in the `SRT` test asset;
-its backend errors intermittently server-side). To run the demo on *your own*
+its backend errors intermittently server-side). To run the demo on _your own_
 USDC anchor instead, the Docker stack in [`anchor/`](anchor/) must run on a
 public host with HTTPS (Vercel can't host containers) and
 `NEXT_PUBLIC_ANCHOR_HOME_DOMAIN` must point at that domain.
@@ -561,11 +563,13 @@ You need a wallet set to **Testnet** and an account funded with
 ## Database Models
 
 ### User
+
 ```
 id, walletAddress (unique), createdAt, updatedAt
 ```
 
 ### Creator
+
 ```
 id, userId (foreign key), username (unique), walletAddress,
 displayName, bio, avatarUrl, socialLinks (JSON),
@@ -574,12 +578,14 @@ donationGoal (deprecated — see Goal below), createdAt, updatedAt
 ```
 
 ### Goal
+
 ```
 id, creatorId (foreign key), title, targetAmount (Float), currentAmount (Float, default: 0),
 currency (default: "XLM"), status (ACTIVE | COMPLETED | EXPIRED),
 recurring (default: false), recurrenceInterval (WEEKLY | MONTHLY),
 currentPeriodEnd, createdAt, updatedAt
 ```
+
 A creator can have several goals active at once, each denominated in its own
 asset. `Creator.donationGoal` is deprecated in favor of this model — a
 migration copies any existing single goal into a `Goal` row (see
@@ -587,12 +593,14 @@ migration copies any existing single goal into a `Goal` row (see
 dropping it.
 
 ### Donation
+
 ```
 id, creatorId (foreign key), senderAddress, amount (Float),
 currency (default: "XLM"), message, transactionHash, createdAt
 ```
 
 ### Subscription
+
 ```
 id, creatorId (foreign key), supporterAddress, token, amount (Float),
 intervalSecs, onChainId (unique), subscribeTxHash, nextChargeAt,
@@ -632,9 +640,9 @@ npm test
   re-flag vulnerabilities that already exist in `main`'s dependency tree.
 - **Type Drift**: Verifies that changes to shared contract types (`contracts/common/src/lib.rs`) are accompanied by frontend TypeScript updates.
 - **All tests passed**: A single job depending on all the above to provide a unified 'all green' status for branch protection.
-None of the jobs require real secrets or a live database — backend tests
-mock Prisma, and the Prisma client can be generated from `schema.prisma`
-without a reachable `DATABASE_URL`.
+  None of the jobs require real secrets or a live database — backend tests
+  mock Prisma, and the Prisma client can be generated from `schema.prisma`
+  without a reachable `DATABASE_URL`.
 
 [`.github/dependabot.yml`](.github/dependabot.yml) opens weekly update pull requests for npm in
 `frontend/` and `backend/`, the root Cargo workspace, and the GitHub Actions workflows themselves;

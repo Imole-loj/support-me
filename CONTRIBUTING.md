@@ -19,6 +19,7 @@ Thank you for your interest in contributing to SupportMe. This project is built 
 - `contracts/` — Soroban smart contracts (`donation`, `creator-registry`) in a Cargo workspace. Deployed testnet addresses are listed in the README; contract tests run in CI on every pull request.
 - `anchor/` — Local SEP-24 test anchor for the fiat cash-out flow; see [`anchor/README.md`](anchor/README.md).
 - `docs/` — Architecture, API, authentication, security, troubleshooting, and runbook documentation. Start at the index in [`docs/README.md`](docs/README.md).
+- [`docs/testnet-quickstart.md`](docs/testnet-quickstart.md) — Step-by-step testnet wallet setup (Freighter, Friendbot, USDC trustline, first tip).
 - `docs/design/` — Handoff-ready UI/UX specs (donation widget, profile themes, empty states, …). New UI areas start here before implementation.
 - `TESTING.md` — What CI runs and how to run each suite locally.
 
@@ -118,6 +119,7 @@ test suite locally if CI doesn't give you enough confidence on its own.
 ## Reporting Issues
 
 If you find a bug or want to propose a feature, open an issue with:
+
 - Summary of the problem or feature
 - Steps to reproduce / expected behavior
 - Any relevant screenshots or logs

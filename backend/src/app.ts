@@ -139,9 +139,12 @@ app.use("/api/admin", adminRouter);
 app.use("/api/activity", activityRouter);
 app.use("/api/account", accountRouter);
 // Email preview is a developer tool and should not be exposed in production (#272)
-if (process.env.NODE_ENV !== "production" || process.env.EMAIL_PREVIEW_ENABLED === "true") {
-  app.use("/api/email/preview", emailPreviewRouter);
-}
+app.use("/api/email/preview", (req, res, next) => {
+  if (process.env.NODE_ENV === "production" && process.env.EMAIL_PREVIEW_ENABLED !== "true") {
+    return res.sendStatus(404);
+  }
+  return next();
+}, emailPreviewRouter);
 app.use("/api", seoRouter);
 
 app.use((req, res) => {

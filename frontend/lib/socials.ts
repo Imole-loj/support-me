@@ -41,8 +41,19 @@ export function normalizeSocialValue(platform: SocialPlatform, raw: string): str
   const value = raw.trim();
   if (!value) return '';
   if (/^https?:\/\//i.test(value)) return value;
+  if (platform.key === 'website') return `https://${value}`;
   if (!platform.prefix) return value;
   return platform.prefix + value.replace(/^@/, '');
+}
+
+/** Returns true only for absolute HTTP(S) URLs with a valid host. */
+export function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 /** Look up a platform definition by its storage key. */

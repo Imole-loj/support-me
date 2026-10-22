@@ -4,6 +4,7 @@
 // other cases here — TOML resolution and fetch polling — are env-agnostic.)
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { NETWORK_PASSPHRASE } from '@/lib/stellarNetwork';
 import { loadAnchorConfig, pollWithdraw, ensureTrustline, sendWithdrawPayment, AnchorError } from '@/lib/anchor';
 import { signTransaction } from '@/lib/wallet';
 
@@ -156,7 +157,7 @@ describe('ensureTrustline', () => {
 
     // Wallet mock signs the built XDR locally and returns the SDK's shape.
     vi.mocked(signTransaction).mockImplementation(async (xdr: string) => {
-      const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, StellarSdk.Networks.TESTNET);
+      const tx = StellarSdk.TransactionBuilder.fromXDR(xdr, NETWORK_PASSPHRASE);
       tx.sign(keypair);
       return { signedTxXdr: tx.toEnvelope().toXDR('base64') };
     });
@@ -203,7 +204,7 @@ describe('sendWithdrawPayment', () => {
   // Signs the built XDR locally so the submitted tx is well-formed.
   const mockWalletSign = () =>
     vi.mocked(signTransaction).mockImplementation(async (xdr: string) => {
-      const built = StellarSdk.TransactionBuilder.fromXDR(xdr, StellarSdk.Networks.TESTNET);
+      const built = StellarSdk.TransactionBuilder.fromXDR(xdr, NETWORK_PASSPHRASE);
       built.sign(keypair);
       return { signedTxXdr: built.toEnvelope().toXDR('base64') };
     });

@@ -30,9 +30,8 @@
 //! idle periods. See the `common` crate docs for the TTL constants.
 
 use common::{
-    extend_instance_ttl, extend_persistent_ttl, extend_subscription_ttl, validate_admin_set,
-    AdminAction, AdminProposal, CreatorProfile, DonationRecord, Subscription,
-    ADMIN_PROPOSAL_TTL_SECONDS,
+    extend_instance_ttl, extend_subscription_ttl, AdminAction, AdminProposal, CreatorProfile,
+    DonationRecord, Subscription, ADMIN_PROPOSAL_TTL_SECONDS,
 };
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, symbol_short, token, Address, Env,
@@ -334,6 +333,10 @@ impl DonationContract {
             .unwrap_or(0);
         let now = env.ledger().timestamp();
         let eta = match now.checked_add(timelock) {
+            Some(t) => t,
+            None => soroban_sdk::panic_with_error!(&env, DonationError::Overflow),
+        };
+        let expires_at = match now.checked_add(ADMIN_PROPOSAL_TTL_SECONDS) {
             Some(t) => t,
             None => soroban_sdk::panic_with_error!(&env, DonationError::Overflow),
         };
@@ -1030,15 +1033,8 @@ impl DonationContract {
         creator.require_auth();
         extend_instance_ttl(&env);
         let registry = Self::registry_address(&env);
-        let args: Vec<Val> = (creator.clone(), goal_amount).into_val(&env);
+        let args: Vec<Val> = (creator, goal_amount).into_val(&env);
         let (): () = env.invoke_contract(&registry, &Symbol::new(&env, "set_goal"), args);
-
-        GoalUpdatedEvent {
-            creator,
-            goal_amount,
-            updated_at: env.ledger().timestamp(),
-        }
-        .publish(&env);
     }
 
     /// Cross-contract call: reads a creator's funding goal from CreatorRegistry.
@@ -1111,6 +1107,33 @@ mod tests {
     fn create_token_contract(env: &Env, admin: &Address) -> Address {
         env.register_stellar_asset_contract_v2(admin.clone())
             .address()
+    }
+
+    fn deploy_pair(
+        env: &Env,
+        admins: Vec<Address>,
+        threshold: u32,
+        timelock_delay: u64,
+    ) -> (
+        DonationContractClient<'_>,
+        CreatorRegistryContractClient<'_>,
+    ) {
+        let donation_id = env.register(DonationContract, ());
+        let registry_id = env.register(
+            CreatorRegistryContract,
+            (
+                admins.clone(),
+                threshold,
+                timelock_delay,
+                donation_id.clone(),
+            ),
+        );
+        let donation_client = DonationContractClient::new(env, &donation_id);
+        donation_client.initialize_multisig(&admins, &threshold, &timelock_delay, &registry_id);
+        (
+            donation_client,
+            CreatorRegistryContractClient::new(env, &registry_id),
+        )
     }
 
     fn setup(

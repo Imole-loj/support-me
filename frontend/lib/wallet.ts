@@ -1,11 +1,11 @@
-import { StellarWalletsKit, Networks } from '@creit.tech/stellar-wallets-kit';
+import { StellarWalletsKit } from '@creit.tech/stellar-wallets-kit';
 import { FreighterModule } from '@creit.tech/stellar-wallets-kit/modules/freighter';
 import { xBullModule } from '@creit.tech/stellar-wallets-kit/modules/xbull';
 import { AlbedoModule } from '@creit.tech/stellar-wallets-kit/modules/albedo';
 import { RabetModule } from '@creit.tech/stellar-wallets-kit/modules/rabet';
 import { LobstrModule } from '@creit.tech/stellar-wallets-kit/modules/lobstr';
-
-const NETWORK_PASSPHRASE = Networks.TESTNET;
+import * as StellarSdk from '@stellar/stellar-sdk';
+import { NETWORK_PASSPHRASE, horizonServer } from './stellarNetwork';
 
 let initialized = false;
 
@@ -170,9 +170,7 @@ export const addTrustline = async (assetCode: string, address: string): Promise<
 
   try {
     // Load the account to get the current sequence number
-    const horizonUrl = 'https://horizon-testnet.stellar.org';
-    const server = new StellarSdk.Horizon.Server(horizonUrl);
-    const account = await server.loadAccount(address);
+    const account = await horizonServer.loadAccount(address);
 
     // Build the changeTrust operation
     const assetObj = new StellarSdk.Asset(assetCode, asset.issuer);
@@ -189,7 +187,7 @@ export const addTrustline = async (assetCode: string, address: string): Promise<
 
     // Submit the transaction
     const signedTx = StellarSdk.TransactionBuilder.fromXDR(signedTxXdr, NETWORK_PASSPHRASE) as StellarSdk.Transaction;
-    const result = await server.submitTransaction(signedTx);
+    const result = await horizonServer.submitTransaction(signedTx);
 
     return result.hash;
   } catch (err) {

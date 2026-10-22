@@ -23,7 +23,9 @@ import {
 } from '@/lib/contract';
 import { availableAssetCodes, getAsset, type AssetCode } from '@/lib/assets';
 import { MIN_DONATION_AMOUNT } from '@/lib/donation';
-import { getPlatform } from '@/lib/socials';
+import { memoByteLength } from '@/lib/memo';
+import { getPlatform, isHttpUrl } from '@/lib/socials';
+import { explorerTxUrl, horizonServer } from '@/lib/stellarNetwork';
 import { API_URL } from '@/lib/api';
 import { fetchWithRetry } from '@/lib/network';
 import { describeDonationFailure, type FlowFailure } from '@/lib/failures';
@@ -35,8 +37,6 @@ import { getMessages, useDocumentLang, useLocalePreference, type Locale } from '
 import { THEME_LAYOUTS, themeStyle, type ProfileTheme } from '@/lib/theme';
 
 
-const HORIZON_URL = 'https://horizon-testnet.stellar.org';
-const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
 interface Creator {
   id: number;
@@ -323,7 +323,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
   // back to null when the wallet holds no trustline/balance for it.
   const loadAssetBalance = useCallback(async (address: string, code: string) => {
     try {
-      const account = await server.loadAccount(address);
+      const account = await horizonServer.loadAccount(address);
       setIsUnfunded(false);
       const asset = getAsset(code);
       let match;
@@ -336,7 +336,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
         match = account.balances.find((b: { asset_type?: string; asset_code?: string }) => {
           if (b.asset_type === 'native') return false;
           if (asset && asset.code === code && typeof asset.balanceMatcher === 'function') {
-            return asset.balanceMatcher(b);
+            return asset.balanceMatcher(b as StellarSdk.Horizon.HorizonApi.BalanceLine);
           }
           return b.asset_code === code;
         });
@@ -481,7 +481,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
 
       const txLink = (
         <a
-          href={`https://stellar.expert/explorer/testnet/tx/${hash}`}
+          href={explorerTxUrl(hash)}
           target="_blank"
           rel="noopener noreferrer"
           className="underline"
@@ -680,7 +680,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
   }
 
   const socialLinks = creator.socialLinks || {};
-  const socialEntries = Object.entries(socialLinks).filter(([, url]) => url);
+  const socialEntries = Object.entries(socialLinks).filter(([, url]) => isHttpUrl(url));
 
   const displayName = creator.displayName || creator.username;
   const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://support-mee.vercel.app';
@@ -895,7 +895,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         rel="noopener noreferrer"
                         className="underline"
                       >
-                        Circle's faucet
+                        Circle&apos;s faucet
                       </a>
                       . Test tokens have no real value.
                     </p>
@@ -935,7 +935,9 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                 const parsedAmt = parseFloat(donationAmount);
                 const isAmountValid = Number.isFinite(parsedAmt) && parsedAmt >= MIN_DONATION_AMOUNT;
                 const isLargeDonation = Number.isFinite(parsedAmt) && parsedAmt >= LARGE_DONATION_THRESHOLD;
-                const canSubmit = isAmountValid && (!isLargeDonation || largeDonationConfirmed);
+                const memoBytes = memoByteLength(donationMessage);
+                const memoTooLong = memoBytes > MAX_MEMO_LENGTH;
+                const canSubmit = isAmountValid && (!isLargeDonation || largeDonationConfirmed) && !memoTooLong;
 
                 return (
                   <>
@@ -1016,14 +1018,18 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         id="donation-message"
                         value={donationMessage}
                         onChange={(e) => setDonationMessage(e.target.value)}
-                        maxLength={MAX_MEMO_LENGTH}
                         placeholder={t('messagePlaceholder')}
                         className="input-brutal text-sm"
                         rows={3}
                       />
                       <p className="text-xs text-muted mt-1 font-medium">
-                        {t('characterCount', { count: donationMessage.length, max: MAX_MEMO_LENGTH })}
+                        {memoBytes}/{MAX_MEMO_LENGTH} bytes
                       </p>
+                      {memoTooLong && (
+                        <p role="alert" className="text-xs text-red-600 mt-1">
+                          Message must be {MAX_MEMO_LENGTH} bytes or fewer.
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between gap-3">

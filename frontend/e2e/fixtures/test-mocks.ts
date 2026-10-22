@@ -1,4 +1,5 @@
 import { Page, Route } from '@playwright/test';
+import { HORIZON_URL } from '../../lib/stellarNetwork';
 
 export const MOCK_USER_ADDRESS = 'GDHJOKPWGK7WE6P63I5R6ILPFOF3HML3LKFV4SVXXL7DLDA5KD6J4XAS';
 export const MOCK_CREATOR_ADDRESS = 'GC235RXOHGDYVO5P3UAGXATQ2W22XKH2LA64IZXQD6HDBKZWHZ3OAFVQ';
@@ -180,7 +181,7 @@ export async function setupE2EMocks(page: Page, options: SetupE2EOptions = {}) {
   );
 
   // 2. Intercept Horizon testnet requests for account balance
-  await page.route('https://horizon-testnet.stellar.org/**', async (route: Route) => {
+  await page.route(`${HORIZON_URL}/**`, async (route: Route) => {
     const url = route.request().url();
     if (url.includes('/accounts/')) {
       await route.fulfill({

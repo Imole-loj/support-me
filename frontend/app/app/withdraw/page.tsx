@@ -12,9 +12,8 @@ import { notify } from '@/lib/notify';
 import { useNgnRate } from '@/lib/useNgnRate';
 import { API_URL } from '@/lib/api';
 import { fundWithFriendbot } from '@/lib/contract';
+import { horizonServer } from '@/lib/stellarNetwork';
 
-const HORIZON_URL = 'https://horizon-testnet.stellar.org';
-const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
 const NIGERIAN_BANKS = [
   'Access Bank', 'GTBank', 'Kuda', 'Opay', 'UBA', 'Zenith Bank',
@@ -47,7 +46,7 @@ export default function WithdrawPage() {
 
   useEffect(() => {
     if (!walletAddress) { setBalancesLoading(false); return; }
-    server.loadAccount(walletAddress)
+    horizonServer.loadAccount(walletAddress)
       .then((account) => {
         setIsUnfunded(false);
         const native = account.balances.find(
@@ -86,7 +85,7 @@ export default function WithdrawPage() {
       await fundWithFriendbot(walletAddress);
       notify.success('Wallet funded successfully!');
       // Reload balances
-      const account = await server.loadAccount(walletAddress);
+      const account = await horizonServer.loadAccount(walletAddress);
       setIsUnfunded(false);
       const native = account.balances.find(
         (b): b is StellarSdk.Horizon.HorizonApi.BalanceLineNative => b.asset_type === 'native'

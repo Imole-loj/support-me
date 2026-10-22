@@ -200,6 +200,9 @@ export class SorobanEventListener {
           value.subscription_id != null
             ? Number(value.subscription_id)
             : undefined;
+        const donor = topics[1] as string;
+        const creator = topics[2] as string;
+        const currency = resolveTokenCurrency(value.token ? String(value.token) : undefined);
 
         const payload: DonationEvent = {
           donor,
@@ -238,7 +241,7 @@ export class SorobanEventListener {
 
         await this.reconcileDonation(evt, donor, creator, {
           amount: value.amount,
-          memo: value.memo,
+          memo: value.memo || "",
           currency,
         });
         return true;
@@ -304,16 +307,17 @@ export class SorobanEventListener {
 
       case "goal_upd": {
         const value = decodeScVal(evt.value) as {
-          goal_amount: bigint | number;
+          goal_amount: bigint | string | number;
           updated_at: bigint | number;
         };
 
         const creatorAddress = topics[1] as string;
-        const goalAmount = Number(value.goal_amount);
+        const goalAmountBigInt = BigInt(value.goal_amount);
+        const goalAmountStr = goalAmountBigInt.toString();
 
         const payload: GoalUpdatedEvent = {
           creator: creatorAddress,
-          goalAmount: value.goal_amount.toString(),
+          goalAmount: goalAmountStr,
           updatedAt: Number(value.updated_at),
           ledger: evt.ledger,
           txHash: evt.txHash,
@@ -326,7 +330,12 @@ export class SorobanEventListener {
         try {
           await prisma.creator.updateMany({
             where: { walletAddress: creatorAddress },
-            data: { donationGoal: goalAmount },
+            data: {
+              donationGoal:
+                goalAmountBigInt <= BigInt(2147483647)
+                  ? Number(goalAmountBigInt)
+                  : 2147483647,
+            },
           });
         } catch (err) {
           console.error(

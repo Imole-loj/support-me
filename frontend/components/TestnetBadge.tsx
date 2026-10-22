@@ -1,8 +1,6 @@
 'use client';
 
-import * as StellarSdk from '@stellar/stellar-sdk';
-
-const NETWORK_PASSPHRASE = StellarSdk.Networks.TESTNET;
+import { STELLAR_NETWORK } from '@/lib/stellarNetwork';
 
 interface TestnetBadgeProps {
   className?: string;
@@ -13,7 +11,7 @@ interface TestnetBadgeProps {
  * This helps users distinguish between testnet and mainnet environments.
  */
 export function TestnetBadge({ className = '' }: TestnetBadgeProps) {
-  if (NETWORK_PASSPHRASE !== StellarSdk.Networks.TESTNET) {
+  if (STELLAR_NETWORK !== 'testnet') {
     return null;
   }
 

@@ -1,0 +1,63 @@
+name: Testnet Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run nightly at 02:00 UTC
+    - cron: "0 2 * * *"
+
+jobs:
+  testnet-integration:
+    name: Soroban Testnet Integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32v1-none
+
+      - name: Cache cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build contracts to WASM
+        run: cargo build --workspace --target wasm32v1-none --release
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --features opt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Run Testnet Integration Suite with Retries
+        run: |
+          cd backend
+          MAX_RETRIES=3
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Running testnet integration attempt $i/$MAX_RETRIES..."
+            if npm run test:testnet; then
+              echo "Testnet integration test passed!"
+              exit 0
+            fi
+            echo "Attempt $i failed. Retrying in 15s..."
+            sleep 15
+          done
+          echo "All attempts failed."
+          exit 1
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/supportme?schema=public
+          SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+          FRIENDBOT_URL: https://friendbot.stellar.org

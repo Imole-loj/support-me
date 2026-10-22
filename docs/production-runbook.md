@@ -11,12 +11,14 @@ This runbook documents common production failure modes for SupportMe, including 
 - [Smart Contract Errors](#smart-contract-errors)
 - [SSE (Server-Sent Events) Issues](#sse-server-sent-events-issues)
 - [Executor Key Issues](#executor-key-issues)
+- [Testnet Reset Recovery](testnet-reset-runbook.md)
 
 ---
 
 ## RPC Outage
 
 ### Impact
+
 - `SorobanEventListener` cannot poll for donation events → real-time dashboard updates stop
 - `SubscriptionExecutor` cannot charge recurring donations → subscription payments fail
 - Frontend cannot submit transactions to Stellar network
@@ -25,12 +27,14 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms:**
+
 - `/health` endpoint returns `status: "degraded"` with `sorobanRpc.status: "error"`
 - Dashboard and profile pages stop showing live donations
 - Recurring donations fail with `lastError` containing RPC-related messages
 - Backend logs show: `SorobanEventListener: poll failed: Soroban RPC getEvents failed: ...`
 
 **Monitoring:**
+
 - Check `/health` endpoint: `curl https://your-backend.com/health`
 - Review backend logs for RPC errors
 - Monitor `SubscriptionExecutor` logs for charge failures
@@ -38,6 +42,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Response Steps
 
 1. **Verify RPC Status**
+
    ```bash
    # Check if Soroban RPC is reachable
    curl -X POST https://soroban-testnet.stellar.org \
@@ -67,6 +72,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Verify dashboard shows live donations again
 
 ### Prevention
+
 - Set up alerts for `/health` endpoint degradation
 - Consider using multiple RPC endpoints with fallback logic
 - Monitor RPC provider status pages
@@ -76,6 +82,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ## Database Connectivity Issues
 
 ### Impact
+
 - All backend API endpoints fail (authentication, creator profiles, donations, subscriptions)
 - `SubscriptionExecutor` cannot query or update subscription records
 - `SorobanEventListener` continues running but cannot correlate events with creators
@@ -84,12 +91,14 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms:**
+
 - All API endpoints return 500 errors
 - Backend logs show Prisma connection errors: `Can't reach database server`
 - Health check may fail if DB check is implemented
 - Authentication fails even with valid signatures
 
 **Monitoring:**
+
 - Check Railway logs for database connection errors
 - Monitor Railway database status
 - Test database connectivity: `npx prisma db push --skip-generate` (from local)
@@ -117,6 +126,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Run `npx prisma db push` to verify schema is intact
 
 5. **Check Database Schema**
+
    ```bash
    # From backend directory
    npx prisma db push --skip-generate
@@ -128,6 +138,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Verify API endpoints respond correctly
 
 ### Prevention
+
 - Set up database connection pooling
 - Implement database health checks in `/health` endpoint
 - Monitor database connection metrics
@@ -138,6 +149,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ## Failed Recurring-Charge Job
 
 ### Impact
+
 - Subscriptions are not charged when due
 - Creators don't receive recurring donation payments
 - Supporters may see payment failures in their subscription management
@@ -146,17 +158,19 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms:**
+
 - Backend logs show: `SubscriptionExecutor: could not process subscription {id}: ...`
 - Database records show `lastError` field populated on subscriptions
 - `nextChargeAt` is in the past but `lastChargedAt` is not updated
 - Supporters receive payment failure emails (if notifications are configured)
 
 **Monitoring:**
+
 - Query database for stuck subscriptions:
   ```sql
-  SELECT * FROM "Subscription" 
-  WHERE active = true 
-  AND next_charge_at <= NOW() 
+  SELECT * FROM "Subscription"
+  WHERE active = true
+  AND next_charge_at <= NOW()
   AND last_charged_at < NOW() - INTERVAL '1 hour';
   ```
 
@@ -172,10 +186,11 @@ This runbook documents common production failure modes for SupportMe, including 
    - Subscription executor requires RPC to submit transactions
 
 3. **Review Specific Failure**
+
    ```sql
    -- Check specific subscription errors
-   SELECT id, "supporterAddress", "lastError", "nextChargeAt" 
-   FROM "Subscription" 
+   SELECT id, "supporterAddress", "lastError", "nextChargeAt"
+   FROM "Subscription"
    WHERE "lastError" IS NOT NULL;
    ```
 
@@ -207,6 +222,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Verify `lastError` is cleared after successful charges
 
 ### Prevention
+
 - Set up alerts for subscription charge failures
 - Monitor executor key balance (auto-fund if low)
 - Implement retry logic with exponential backoff (already exists)
@@ -217,6 +233,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ## Bad Deploy
 
 ### Impact
+
 - New code introduces bugs or breaking changes
 - Frontend or backend becomes partially or fully non-functional
 - Database schema changes may cause errors
@@ -225,6 +242,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms**
+
 - Frontend shows errors or blank pages
 - API endpoints return unexpected errors
 - Build failures in CI/CD
@@ -232,6 +250,7 @@ This runbook documents common production failure modes for SupportMe, including 
 - User reports of broken functionality
 
 **Monitoring**
+
 - CI/CD pipeline status (GitHub Actions)
 - Vercel deployment logs
 - Railway deployment logs
@@ -287,6 +306,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Update runbook if new failure mode discovered
 
 ### Prevention
+
 - Implement staging environment for pre-production testing
 - Add comprehensive test coverage (unit, integration, e2e)
 - Use feature flags for risky changes
@@ -299,6 +319,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ## Smart Contract Errors
 
 ### Impact
+
 - Donations fail to settle on-chain
 - Subscription operations fail
 - Cross-contract calls fail
@@ -307,12 +328,14 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms**
+
 - Frontend shows contract simulation errors
 - Transactions fail on Stellar explorer
 - Backend logs show contract invocation failures
 - Specific error messages from Soroban SDK
 
 **Monitoring**
+
 - Check Stellar explorer for failed transactions
 - Monitor backend logs for contract errors
 - Test contract calls directly via RPC
@@ -360,6 +383,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Update documentation with new contract addresses
 
 ### Prevention
+
 - Thoroughly test contracts before deployment
 - Use testnet extensively before mainnet deployment
 - Implement contract upgrade patterns
@@ -371,6 +395,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ## SSE (Server-Sent Events) Issues
 
 ### Impact
+
 - Real-time dashboard updates stop working
 - Profile pages don't show live donations
 - Users must refresh to see new donations
@@ -379,12 +404,14 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms**
+
 - Dashboard doesn't update when new donations occur
 - Profile pages show stale data
 - Browser console shows SSE connection errors
 - Backend logs show event listener errors
 
 **Monitoring**
+
 - Check backend logs for `SorobanEventListener` errors
 - Test SSE endpoint directly: `curl https://your-backend.com/api/events`
 - Monitor number of active SSE connections
@@ -405,6 +432,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - This will restart the event listener
 
 4. **Verify SSE Endpoint**
+
    ```bash
    # Test SSE endpoint
    curl -N https://your-backend.com/api/events
@@ -421,6 +449,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Verify SSE connection is established
 
 ### Prevention
+
 - Add health check for SSE endpoint
 - Monitor event listener uptime
 - Add reconnection logic in frontend (already exists with EventSource)
@@ -431,6 +460,7 @@ This runbook documents common production failure modes for SupportMe, including 
 ## Executor Key Issues
 
 ### Impact
+
 - Recurring donations cannot be charged
 - `SubscriptionExecutor` fails to start
 - All subscription payments fail
@@ -438,11 +468,13 @@ This runbook documents common production failure modes for SupportMe, including 
 ### Detection
 
 **Symptoms**
+
 - Backend logs: `EXECUTOR_SECRET_KEY is not set, recurring donations will not be charged`
 - Subscription charges fail with "executor not authorized" errors
 - `SubscriptionExecutor` doesn't start
 
 **Monitoring**
+
 - Check backend logs on startup
 - Verify `EXECUTOR_SECRET_KEY` is set in Railway
 - Monitor subscription charge failures
@@ -457,10 +489,10 @@ This runbook documents common production failure modes for SupportMe, including 
    - Generate a new keypair:
      ```javascript
      // Use Stellar SDK or stellar-cli
-     const Keypair = require('@stellar/stellar-sdk').Keypair;
+     const Keypair = require("@stellar/stellar-sdk").Keypair;
      const keypair = Keypair.random();
-     console.log('Secret:', keypair.secret());
-     console.log('Public:', keypair.publicKey());
+     console.log("Secret:", keypair.secret());
+     console.log("Public:", keypair.publicKey());
      ```
    - Set `EXECUTOR_SECRET_KEY` in Railway
    - Restart backend service
@@ -487,6 +519,7 @@ This runbook documents common production failure modes for SupportMe, including 
    - Verify executor public key matches contract authorization
 
 ### Prevention
+
 - Never commit executor secret key to git
 - Use secrets management (Railway environment variables)
 - Monitor executor key balance
@@ -498,23 +531,27 @@ This runbook documents common production failure modes for SupportMe, including 
 ## General Troubleshooting Commands
 
 ### Backend Health Check
+
 ```bash
 curl https://your-backend.com/health
 ```
 
 ### Check Backend Logs (Railway)
+
 ```bash
 # Via Railway CLI or dashboard
 railway logs
 ```
 
 ### Database Connection Test
+
 ```bash
 cd backend
 npx prisma db push --skip-generate
 ```
 
 ### RPC Connectivity Test
+
 ```bash
 curl -X POST https://soroban-testnet.stellar.org \
   -H "Content-Type: application/json" \
@@ -522,6 +559,7 @@ curl -X POST https://soroban-testnet.stellar.org \
 ```
 
 ### Check Stuck Subscriptions
+
 ```sql
 SELECT id, "supporterAddress", "lastError", "nextChargeAt", "lastChargedAt"
 FROM "Subscription"
@@ -531,6 +569,7 @@ AND last_charged_at < NOW() - INTERVAL '1 hour';
 ```
 
 ### Check Recent Donation Events
+
 ```sql
 SELECT * FROM "Donation"
 ORDER BY "createdAt" DESC
@@ -552,6 +591,8 @@ LIMIT 10;
 
 - [Architecture](architecture.md) - System architecture overview
 - [Database Backups](database-backups.md) - Backup and restore procedures
+- [Testnet Reset Recovery](testnet-reset-runbook.md) - Redeploying contracts and recovering from a testnet wipe
+- [Testnet Quickstart](testnet-quickstart.md) - Testnet wallet and asset setup guide
 - [README](../README.md) - General project documentation
 
 ---
@@ -559,6 +600,7 @@ LIMIT 10;
 ## Runbook Maintenance
 
 This runbook should be updated:
+
 - When new failure modes are discovered
 - After major system changes
 - After incident post-mortems

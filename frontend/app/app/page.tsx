@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import * as StellarSdk from '@stellar/stellar-sdk';
 import { notify } from '@/lib/notify';
 import { HugeiconsIcon } from '@hugeicons/react';
 import {
@@ -21,9 +20,8 @@ import { formatUsd } from '@/lib/prices';
 import { availableAssetCodes, getAsset } from '@/lib/assets';
 import { ShareModal } from '@/components/ShareModal';
 import { fundWithFriendbot } from '@/lib/contract';
+import { horizonServer } from '@/lib/stellarNetwork';
 
-const HORIZON_URL = 'https://horizon-testnet.stellar.org';
-const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
 export const BALANCE_HIDDEN_STORAGE_KEY = 'balance_hidden';
 
@@ -84,7 +82,7 @@ export default function AppHubPage() {
     }
     setBalancesLoading(true);
     try {
-      const account = await server.loadAccount(walletAddress);
+      const account = await horizonServer.loadAccount(walletAddress);
       setIsUnfunded(false);
       const next: Balances = {};
       for (const code of assetCodes) {

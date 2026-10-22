@@ -168,11 +168,12 @@ describe("SorobanEventListener event processing & reconciliation", () => {
     });
 
     eventBus.off(DONATION_EVENT, handler);
+    warn.mockRestore();
   });
 
   it("processes recurring 'donated' event with subscription_id and reconciles subscription state", async () => {
-    const emittedEvents: any[] = [];
-    const handler = (evt: any) => emittedEvents.push(evt);
+    const emittedEvents: DonationEvent[] = [];
+    const handler = (evt: DonationEvent) => emittedEvents.push(evt);
     eventBus.on(DONATION_EVENT, handler);
 
     const rawEvent: RawEvent = {
@@ -219,7 +220,6 @@ describe("SorobanEventListener event processing & reconciliation", () => {
     });
 
     eventBus.off(DONATION_EVENT, handler);
-    warn.mockRestore();
   });
 
   it("processes 'subscribed' event with schedule details and emits SUBSCRIPTION_CREATED_EVENT", async () => {

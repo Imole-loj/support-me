@@ -2,12 +2,9 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import { signTransaction as signWithWallet } from "./wallet";
 import { sacContractId } from "./assets";
 import { reportRetry, withRetry } from "./retry";
+import { NETWORK_PASSPHRASE, SOROBAN_RPC_URL, STELLAR_NETWORK } from './stellarNetwork';
 
-const RPC_URL =
-  process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ||
-  "https://soroban-testnet.stellar.org";
 const CONTRACT_ID = process.env.NEXT_PUBLIC_DONATION_CONTRACT_ID;
-const NETWORK_PASSPHRASE = StellarSdk.Networks.TESTNET;
 const FRIENDBOT_URL = 'https://friendbot.stellar.org';
 // Stellar's network targets a ~5s ledger close time; used only to translate
 // a subscription's charge interval into an approval expiration window.
@@ -23,7 +20,7 @@ export const MAX_CHARGE_INTERVAL_DAYS = Math.floor(
   (MAX_TTL_LEDGERS * APPROX_SECONDS_PER_LEDGER) / 86400,
 );
 
-const server = new StellarSdk.rpc.Server(RPC_URL);
+const server = new StellarSdk.rpc.Server(SOROBAN_RPC_URL);
 
 // How long to keep polling for a submitted transaction to be included in a
 // ledger. Soroban targets a ~5s ledger close, so this allows several misses
@@ -36,7 +33,7 @@ export const CHARGE_ERRORS = {
   2: "Supporter has insufficient balance.",
 };
 
-export const CONTRACT_ERRORS = {
+export const CONTRACT_ERRORS: Record<number, string> = {
   1: "Insufficient allowance to charge subscription.",
   2: "Supporter has insufficient balance.",
   3: "Contract is not initialized.",
@@ -66,7 +63,7 @@ export const CONTRACT_ERRORS = {
   27: "Admin threshold is invalid.",
 };
 
-export const REGISTRY_ERRORS = {
+export const REGISTRY_ERRORS: Record<number, string> = {
   1: "Registry is not initialized.",
   2: "Registry is already initialized.",
   3: "Caller is not authorized.",
@@ -90,10 +87,11 @@ export const REGISTRY_ERRORS = {
  * Parses raw error messages, simulation errors, or transaction errors for Soroban Error(Contract, #N)
  * and returns user-friendly messages for known contract error codes.
  */
-export function parseContractError(err) {
+export function parseContractError(err: unknown): string | null {
   if (!err) return null;
+  const error = err as { message?: string };
   const rawMsg =
-    typeof err === "string" ? err : err.message || JSON.stringify(err);
+    typeof err === "string" ? err : error.message || JSON.stringify(err);
 
   // Match Error(Contract, #N) or Error(Contract, N) or Error(Wasm, ...)
   const match = rawMsg.match(/Error\(Contract,\s*#?([0-9]+)\)/i);
@@ -138,8 +136,12 @@ export function parseContractError(err) {
 export type DonationErrorType = 'wallet' | 'simulation' | 'network' | 'unfunded' | 'reset';
 
 export class DonationError extends Error {
-  constructor(type, message, cause, code) {
+  type: DonationErrorType;
+  code?: string | number;
+
+  constructor(type: DonationErrorType, message: string, cause?: unknown, code?: string | number) {
     super(message);
+    this.name = 'DonationError';
     this.type = type;
     this.cause = cause;
     this.code = code;
@@ -153,15 +155,22 @@ export class DonationError extends Error {
  *
  * @param multiplier extra factor, e.g. periodsToApprove
  */
-function toStroops(amount: string | number, multiplier = 1): bigint {
-  const value = parseFloat(String(amount));
-  if (!Number.isFinite(value) || value <= 0) {
+export function toStroops(amount: string | number, multiplier = 1): bigint {
+  const value = String(amount).trim();
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(value);
+  if (!match || (match[2]?.length ?? 0) > 7 || !Number.isSafeInteger(multiplier) || multiplier <= 0) {
     throw new DonationError(
       "simulation",
-      "Enter a valid amount greater than 0.",
+      "Enter a valid amount with no more than 7 decimal places.",
     );
   }
-  return BigInt(Math.round(value * multiplier * 1e7));
+  const whole = BigInt(match[1]);
+  const fraction = BigInt((match[2] ?? '').padEnd(7, '0') || '0');
+  const stroops = whole * BigInt(10_000_000) + fraction;
+  if (stroops <= BigInt(0)) {
+    throw new DonationError("simulation", "Enter a valid amount greater than 0.");
+  }
+  return stroops * BigInt(multiplier);
 }
 
 interface CallContractParams {
@@ -179,6 +188,8 @@ interface CallContractResult {
   returnValue: unknown;
 }
 
+type OnStatus = (status: 'building' | 'simulating' | 'awaiting-signature' | 'submitting' | 'pending' | 'success') => void;
+
 /**
  * Shared build → simulate → sign → submit → poll pipeline for a single
  * contract invocation, used by every function below. Centralizes the
@@ -191,7 +202,7 @@ async function callContract({
   args,
   signerAddress,
   onStatus,
-}) {
+}: CallContractParams): Promise<CallContractResult> {
   if (!contractId) {
     throw new DonationError(
       "simulation",
@@ -249,9 +260,9 @@ async function callContract({
     const parsed = parseContractError(err);
     const message = parsed
       ? parsed
-      : /insufficient|underfunded/i.test(err?.message || "")
+        : /insufficient|underfunded/i.test((err as Error)?.message || "")
         ? "Insufficient balance or allowance to complete this action."
-        : err?.message ||
+        : (err as Error)?.message ||
           "The transaction could not be simulated. Check the amount and try again.";
     throw new DonationError("simulation", message, err);
   }
@@ -383,7 +394,7 @@ export async function sendDonation({
   assetCode = "XLM",
   memo,
   onStatus,
-}) {
+}: SendDonationParams) {
   if (
     typeof window !== "undefined" &&
     window.__SUPPORTME_MOCK_CONTRACT__?.sendDonation
@@ -408,7 +419,7 @@ export async function sendDonation({
   try {
     tokenId = sacContractId(assetCode);
   } catch (err) {
-    throw new DonationError("simulation", err.message, err);
+    throw new DonationError("simulation", (err as Error).message, err);
   }
   const amountStroops = toStroops(amount);
 
@@ -458,7 +469,7 @@ export async function approveAllowance({
   intervalSecs,
   periodsToApprove = 12,
   onStatus,
-}) {
+}: ApproveAllowanceParams) {
   if (
     typeof window !== "undefined" &&
     window.__SUPPORTME_MOCK_CONTRACT__?.approveAllowance
@@ -476,7 +487,7 @@ export async function approveAllowance({
   try {
     tokenId = sacContractId(assetCode);
   } catch (err) {
-    throw new DonationError("simulation", err.message, err);
+    throw new DonationError("simulation", (err as Error).message, err);
   }
   if (!CONTRACT_ID) {
     throw new DonationError(
@@ -561,7 +572,7 @@ export async function subscribe({
   assetCode = "XLM",
   intervalSecs,
   onStatus,
-}) {
+}: SubscribeParams) {
   if (
     typeof window !== "undefined" &&
     window.__SUPPORTME_MOCK_CONTRACT__?.subscribe
@@ -579,7 +590,7 @@ export async function subscribe({
   try {
     tokenId = sacContractId(assetCode);
   } catch (err) {
-    throw new DonationError("simulation", err.message, err);
+    throw new DonationError("simulation", (err as Error).message, err);
   }
   const amountStroops = toStroops(amount);
 
@@ -617,7 +628,7 @@ export async function cancelSubscription({
   supporterAddress,
   subscriptionId,
   onStatus,
-}) {
+}: CancelSubscriptionParams) {
   if (
     typeof window !== "undefined" &&
     window.__SUPPORTME_MOCK_CONTRACT__?.cancelSubscription
@@ -646,7 +657,7 @@ export async function cancelSubscription({
  * Throws an error if the network is not Testnet or if the request fails.
  */
 export async function fundWithFriendbot(address: string): Promise<void> {
-  if (NETWORK_PASSPHRASE !== StellarSdk.Networks.TESTNET) {
+  if (STELLAR_NETWORK !== 'testnet') {
     throw new DonationError('network', 'Friendbot is only available on Testnet.');
   }
 

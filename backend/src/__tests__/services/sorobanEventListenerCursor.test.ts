@@ -8,7 +8,7 @@
  * file's other imports, not inside a `beforeEach`.
  */
 
-process.env.DONATION_CONTRACT_ID = "CDONATIONCONTRACT";
+process.env.NEXT_PUBLIC_DONATION_CONTRACT_ID = "CDONATIONCONTRACT";
 
 jest.mock("../../prisma", () => ({
   __esModule: true,

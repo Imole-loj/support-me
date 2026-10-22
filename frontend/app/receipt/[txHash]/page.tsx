@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { FileEmpty02Icon, PrinterIcon, ExternalLinkIcon } from '@hugeicons/core-free-icons';
+import { explorerTxUrl } from '@/lib/stellarNetwork';
 
 export default function ReceiptPage({ params }: { params: Promise<{ txHash: string }> }) {
   const { txHash } = use(params);
@@ -26,7 +27,7 @@ export default function ReceiptPage({ params }: { params: Promise<{ txHash: stri
     timeZoneName: 'short',
   });
 
-  const explorerUrl = `https://stellar.expert/explorer/testnet/tx/${txHash}`;
+  const explorerUrl = explorerTxUrl(txHash);
 
   const handlePrint = () => {
     window.print();

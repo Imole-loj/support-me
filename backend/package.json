@@ -17,7 +17,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "test": "jest",
     "lint": "eslint .",
-    "prisma:seed": "ts-node --transpile-only prisma/seed.ts"
+    "prisma:seed": "ts-node --transpile-only prisma/seed.ts",
+    "test:testnet": "ts-node-dev --transpile-only ../testnet-integration/runner.ts"
   },
   "prisma": {
     "seed": "ts-node --transpile-only prisma/seed.ts"

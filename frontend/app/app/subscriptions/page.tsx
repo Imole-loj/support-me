@@ -14,6 +14,7 @@ import { fetchWithRetry, isNetworkError } from '@/lib/network';
 import { useAuthFetch } from '@/lib/useAuthFetch';
 import { isSessionExpiredError } from '@/lib/authFetch';
 import { describeChargeFailure } from '@/lib/failures';
+import { explorerTxUrl } from '@/lib/stellarNetwork';
 
 interface Subscription {
   id: number;
@@ -184,6 +185,11 @@ function SubscriptionsList() {
                     <p className="text-xs text-red-600 font-bold mt-0.5">
                       Last charge failed — {describeChargeFailure(subscription.lastError)}
                     </p>
+                  )}
+                  {subscription.lastChargeTxHash && (
+                    <a href={explorerTxUrl(subscription.lastChargeTxHash)} target="_blank" rel="noopener noreferrer" className="text-xs underline text-primary">
+                      View last charge
+                    </a>
                   )}
                 </div>
 

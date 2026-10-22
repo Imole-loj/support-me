@@ -25,7 +25,7 @@ fails if a title has no matching heading here.
 ## Contents
 
 - [Before you start: testnet checklist](#before-you-start-testnet-checklist)
-- [Testnet reset runbook](#testnet-reset-runbook)
+- [Testnet reset](#testnet-reset)
 - [Wallet connection errors](#wallet-connection-errors)
 - [Donation and subscription errors](#donation-and-subscription-errors)
 - [Reading a raw "Transaction rejected" message](#reading-a-raw-transaction-rejected-message)
@@ -70,7 +70,7 @@ Most testnet failures come from a short list of causes. Check these first:
    paused, `donate`, `subscribe`, `charge_subscription` and `register_creator`
    all fail with `contract is currently paused`.
 
-## Testnet reset runbook
+## Testnet reset
 
 The Stellar Development Foundation resets the public testnet from time to time.
 A reset wipes every deployed contract, restarts the ledger sequence and empties
@@ -128,6 +128,12 @@ function matches the wallet's error message against patterns, so the category
 is a best guess based on what the wallet extension reports.
 
 ### No Stellar wallet detected
+
+### Account not funded
+
+The Stellar account does not exist on the network yet. Fund it with Friendbot
+using the button in the app or `https://friendbot.stellar.org/?addr=<YOUR_G_ADDRESS>`.
+After funding, reload the page and try again.
 
 The wallet kit could not find a wallet extension, or the extension reported
 that it is not installed or not connected.
@@ -242,6 +248,12 @@ How to fix it:
 2. For a subscription allowance, cancel the subscription on
    `/app/subscriptions` and subscribe again from the creator's page. This
    signs a new `approve` for the allowance.
+
+### Missing trustline
+
+Credit assets such as USDC require a trustline before the account can hold or
+send them. Add the asset in your wallet using the issuer configured for this
+deployment, then retry the donation.
 
 ### Transaction rejected
 

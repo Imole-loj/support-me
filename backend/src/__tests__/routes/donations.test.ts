@@ -314,7 +314,7 @@ describe("POST /api/donations", () => {
     expect(mockedPrisma.goal.findMany).not.toHaveBeenCalled();
   });
 
-  it("applies a new donation's amount to every matching active goal (issue #20)", async () => {
+  it("does not apply an unverified client report to goals", async () => {
     mockedPrisma.creator.findUnique.mockResolvedValue({ id: 7, username: "bob" });
     mockedPrisma.donation.upsert.mockResolvedValue({
       id: 1,
@@ -351,29 +351,11 @@ describe("POST /api/donations", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(mockedPrisma.goal.findMany).toHaveBeenCalledWith({
-      where: { creatorId: 7, currency: "XLM", status: "ACTIVE" },
-    });
-    // Full donation amount applied to EACH matching goal via an atomic
-    // increment, not split between them and not computed from a stale read
-    // (issue #262) — see the design-decision comment in services/goalService.ts.
-    expect(mockedPrisma.goal.updateMany).toHaveBeenCalledWith({
-      where: { id: 1, status: "ACTIVE", currentAmount: { lt: 100 } },
-      data: { currentAmount: { increment: 10 } },
-    });
-    // This goal crosses its target (95 + 10 = 105 >= 100) and isn't
-    // recurring, so the conditional ACTIVE → COMPLETED flip also runs.
-    expect(mockedPrisma.goal.updateMany).toHaveBeenCalledWith({
-      where: { id: 2, status: "ACTIVE", currentAmount: { lt: 100 } },
-      data: { currentAmount: { increment: 10 } },
-    });
-    expect(mockedPrisma.goal.updateMany).toHaveBeenCalledWith({
-      where: { id: 2, status: "ACTIVE" },
-      data: { status: "COMPLETED" },
-    });
+    expect(mockedPrisma.goal.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.goal.updateMany).not.toHaveBeenCalled();
   });
 
-  it("emails the creator when a donation carries a goal to its target", async () => {
+  it("does not email goal progress for an unverified client report", async () => {
     const creator = { id: 7, username: "bob", user: { email: "bob@example.com" } };
     mockedPrisma.creator.findUnique.mockResolvedValue(creator);
     mockedPrisma.donation.upsert.mockResolvedValue({ id: 1, creatorId: 7, amount: 10, currency: "XLM" });
@@ -395,15 +377,13 @@ describe("POST /api/donations", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(mockedSendEmail).toHaveBeenCalledWith(
-      expect.objectContaining({ to: "bob@example.com", subject: "You reached your goal: New mic!" })
-    );
+    expect(mockedSendEmail).not.toHaveBeenCalled();
   });
 
   // Issue #18: USDT is just another asset code — createDonationSchema's
   // `currency` field isn't an enum of known assets, so nothing here should
   // need special-casing for a new one to work end-to-end.
-  it("records a donation in USDT and applies it to matching USDT goals (issue #18)", async () => {
+  it("records a provisional USDT donation without applying it to goals", async () => {
     mockedPrisma.creator.findUnique.mockResolvedValue({ id: 7, username: "bob" });
     mockedPrisma.donation.upsert.mockResolvedValue({
       id: 1,
@@ -447,13 +427,8 @@ describe("POST /api/donations", () => {
       update: {},
       create: expect.objectContaining({ currency: "USDT", amount: 25 }),
     });
-    expect(mockedPrisma.goal.findMany).toHaveBeenCalledWith({
-      where: { creatorId: 7, currency: "USDT", status: "ACTIVE" },
-    });
-    expect(mockedPrisma.goal.updateMany).toHaveBeenCalledWith({
-      where: { id: 3, status: "ACTIVE", currentAmount: { lt: 100 } },
-      data: { currentAmount: { increment: 25 } },
-    });
+    expect(mockedPrisma.goal.findMany).not.toHaveBeenCalled();
+    expect(mockedPrisma.goal.updateMany).not.toHaveBeenCalled();
   });
 
   it("does not apply a USDT donation to an XLM-denominated goal", async () => {
@@ -507,7 +482,7 @@ describe("POST /api/donations", () => {
       });
     }
 
-    it("emails the creator when they have an email on file", async () => {
+    it("does not email the creator before the donation is verified", async () => {
       mockCreatorLookups(true);
       mockedPrisma.donation.upsert.mockResolvedValue(created);
 
@@ -520,9 +495,7 @@ describe("POST /api/donations", () => {
       });
 
       expect(res.status).toBe(201);
-      expect(mockedSendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "bob@example.com", subject: expect.stringContaining("donation") })
-      );
+      expect(mockedSendEmail).not.toHaveBeenCalled();
     });
 
     it("does not email the creator when they have no email on file, and does not fail the request", async () => {
@@ -540,7 +513,7 @@ describe("POST /api/donations", () => {
       expect(mockedSendEmail).not.toHaveBeenCalled();
     });
 
-    it("emails the supporter a confirmation when their wallet address matches a known account with an email", async () => {
+    it("does not email the supporter before the donation is verified", async () => {
       mockCreatorLookups(false);
       mockedPrisma.donation.upsert.mockResolvedValue(created);
       mockedPrisma.user.findUnique.mockResolvedValue({
@@ -557,9 +530,7 @@ describe("POST /api/donations", () => {
       });
 
       expect(res.status).toBe(201);
-      expect(mockedSendEmail).toHaveBeenCalledWith(
-        expect.objectContaining({ to: "supporter@example.com" })
-      );
+      expect(mockedSendEmail).not.toHaveBeenCalled();
     });
 
     it("does not send any notification when replaying an existing idempotency key (no new donation)", async () => {
@@ -581,7 +552,7 @@ describe("POST /api/donations", () => {
       expect(mockedSendEmail).not.toHaveBeenCalled();
     });
 
-    it("still returns 201 with the created donation when email delivery throws", async () => {
+    it("returns 201 without attempting email delivery for an unverified donation", async () => {
       mockCreatorLookups(true);
       mockedPrisma.donation.upsert.mockResolvedValue(created);
       mockedSendEmail.mockRejectedValue(new Error("email provider down"));
@@ -594,6 +565,7 @@ describe("POST /api/donations", () => {
       });
 
       expect(res.status).toBe(201);
+      expect(mockedSendEmail).not.toHaveBeenCalled();
       // The donation is already committed, so the client still gets it back —
       // compared through JSON because createdAt is a Date in the fixture and
       // a string once it has crossed the HTTP boundary.

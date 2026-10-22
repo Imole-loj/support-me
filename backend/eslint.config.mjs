@@ -18,7 +18,7 @@ export default tseslint.config(
         // "recommended + no-floating-promises + no-unused-vars" baseline the
         // issue asked for, rather than opting into the much stricter
         // `recommendedTypeChecked` preset's `no-unsafe-*` family.
-        projectService: true,
+        projectService: { allowDefaultProject: ["prisma/seed.ts"] },
         tsconfigRootDir: import.meta.dirname,
       },
     },

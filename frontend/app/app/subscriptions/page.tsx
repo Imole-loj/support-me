@@ -46,19 +46,35 @@ function SubscriptionsList() {
   const [subscriptionToRemove, setSubscriptionToRemove] = useState<Subscription | null>(null);
 
   useEffect(() => {
-    if (!user?.walletAddress) return;
-    fetchWithRetry(`${API_URL}/api/subscriptions?supporterAddress=${encodeURIComponent(user.walletAddress)}`)
+    if (!user?.walletAddress) {
+      setLoading(false);
+      return;
+    }
+    if (!token) return;
+
+    fetchWithRetry(`${API_URL}/api/subscriptions?supporterAddress=${encodeURIComponent(user.walletAddress)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then((res) => {
+        if (res.status === 401) {
+          const authErr = new Error('Session expired, sign in again');
+          (authErr as any).isAuthError = true;
+          throw authErr;
+        }
         if (!res.ok) throw new Error('The server returned an error. Please try again.');
         return res.json();
       })
       .then(setSubscriptions)
       .catch((err) => {
         if (isNetworkError(err)) return;
+        if (err?.isAuthError) {
+          notify.error('Session expired, sign in again');
+          return;
+        }
         notify.error('Could not load your subscriptions', err);
       })
       .finally(() => setLoading(false));
-  }, [user?.walletAddress]);
+  }, [user?.walletAddress, token]);
 
   const handleCancel = async (subscription: Subscription) => {
     if (!user?.walletAddress) return;
@@ -136,9 +152,23 @@ function SubscriptionsList() {
         </div>
 
         {loading ? (
-          <div className="space-y-3">
+          <div className="space-y-3" data-testid="subscriptions-skeleton">
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-24 w-full" />
+          </div>
+        ) : !user?.walletAddress ? (
+          <div className="card-brutal p-8 text-center space-y-3">
+            <p className="text-muted font-medium">
+              Connect a wallet to start or manage recurring donations
+            </p>
+            <div>
+              <Link
+                href="/settings"
+                className="btn-brutal btn-brutal-white inline-block text-sm py-2 px-4"
+              >
+                Go to Settings
+              </Link>
+            </div>
           </div>
         ) : subscriptions.length === 0 ? (
           <div className="card-brutal p-8 text-center">
@@ -183,6 +213,7 @@ function SubscriptionsList() {
                   <button
                     onClick={() => setSubscriptionToCancel(subscription)}
                     disabled={cancellingId === subscription.id}
+                    aria-label={`Cancel donation to ${subscription.creator.displayName || subscription.creator.username}`}
                     className="text-sm font-bold text-ink/60 hover:text-ink underline underline-offset-2 shrink-0"
                   >
                     {cancellingId === subscription.id ? 'Cancelling…' : 'Cancel'}

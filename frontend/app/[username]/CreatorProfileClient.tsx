@@ -1058,7 +1058,8 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         value={donationMessage}
                         onChange={(e) => setDonationMessage(e.target.value)}
                         placeholder={t('messagePlaceholder')}
-                        className="input-brutal text-sm"
+                        disabled={recurring}
+                        className="input-brutal text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         rows={3}
                       />
                       <p className="text-xs text-muted mt-1 font-medium">

@@ -531,6 +531,36 @@ describe('CreatorProfileClient', () => {
     });
   });
 
+  describe('recurring donations message handling (#237)', () => {
+    it('disables message input and shows hint when recurring is checked', async () => {
+      mockFetchSequence({
+        '/api/creators/alice': baseCreator,
+        '/api/goals/alice': { items: [] },
+      });
+      mockConnectWallet.mockResolvedValue('GDONORXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX');
+
+      await renderProfile('alice');
+      await waitFor(() => expect(screen.getByText('Alice')).toBeInTheDocument());
+      await userEvent.click(screen.getByRole('button', { name: /connect wallet/i }));
+
+      const messageInput = screen.getByLabelText(/message/i);
+      expect(messageInput).toBeEnabled();
+
+      const recurringCheckbox = screen.getByRole('checkbox', { name: /make it recurring/i });
+      expect(recurringCheckbox).not.toBeChecked();
+
+      await userEvent.click(recurringCheckbox);
+      expect(recurringCheckbox).toBeChecked();
+      expect(messageInput).toBeDisabled();
+      expect(screen.getByText(/messages apply to one-time tips only/i)).toBeInTheDocument();
+
+      await userEvent.click(recurringCheckbox);
+      expect(recurringCheckbox).not.toBeChecked();
+      expect(messageInput).toBeEnabled();
+      expect(screen.queryByText(/messages apply to one-time tips only/i)).not.toBeInTheDocument();
+    });
+  });
+
   describe('language switcher', () => {
     let fakeLocalStorage: FakeLocalStorage;
 

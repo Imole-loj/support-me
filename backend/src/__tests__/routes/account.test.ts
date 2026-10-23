@@ -19,6 +19,12 @@ jest.mock("../../prisma", () => ({
     withdrawal: {
       findMany: jest.fn(),
     },
+    magicLinkToken: {
+      deleteMany: jest.fn(),
+    },
+    oAuthIdentity: {
+      deleteMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   },
 }));
@@ -28,6 +34,7 @@ import { Prisma } from "@prisma/client";
 import app from "../../app";
 import prisma from "../../prisma";
 import { generateToken } from "../../middleware/auth";
+import { exportRateLimiter, BATCH_SIZE } from "../../routes/account";
 
 const mockedPrisma = prisma as unknown as {
   user: { findUnique: jest.Mock; update: jest.Mock };
@@ -35,12 +42,15 @@ const mockedPrisma = prisma as unknown as {
   donation: { findMany: jest.Mock; updateMany: jest.Mock };
   subscription: { findMany: jest.Mock; updateMany: jest.Mock };
   withdrawal: { findMany: jest.Mock };
+  magicLinkToken: { deleteMany: jest.Mock };
+  oAuthIdentity: { deleteMany: jest.Mock };
   $transaction: jest.Mock;
 };
 
 const token = generateToken(1, "GACCOUNTUSERADDRESS");
 
 beforeEach(() => {
+  exportRateLimiter.clear();
   mockedPrisma.$transaction.mockImplementation((operations: Promise<unknown>[]) =>
     Promise.all(operations)
   );
@@ -50,6 +60,8 @@ beforeEach(() => {
   mockedPrisma.donation.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.subscription.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.creator.update.mockResolvedValue({});
+  mockedPrisma.magicLinkToken.deleteMany.mockResolvedValue({ count: 0 });
+  mockedPrisma.oAuthIdentity.deleteMany.mockResolvedValue({ count: 0 });
   mockedPrisma.user.update.mockResolvedValue({
     id: 1,
     walletAddress: "GACCOUNTUSERADDRESS",
@@ -122,6 +134,74 @@ describe("GET /api/account/export", () => {
     expect(res.body.donations.received).toEqual(received);
     expect(res.body.withdrawals).toEqual(withdrawals);
   });
+
+  it("rate limits the export endpoint per user (#369)", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: 1,
+      walletAddress: "GACCOUNTUSERADDRESS",
+      email: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+      creator: null,
+    });
+
+    // 5 requests allowed
+    for (let i = 0; i < 5; i++) {
+      const res = await request(app)
+        .get("/api/account/export")
+        .set("Authorization", `Bearer ${token}`);
+      expect(res.status).toBe(200);
+    }
+
+    // 6th request is rate-limited
+    const limitedRes = await request(app)
+      .get("/api/account/export")
+      .set("Authorization", `Bearer ${token}`);
+    expect(limitedRes.status).toBe(429);
+    expect(limitedRes.body.code).toBe("TOO_MANY_REQUESTS");
+    expect(limitedRes.headers["retry-after"]).toBeDefined();
+  });
+
+  it("pages through large datasets using cursor-based batches (#369)", async () => {
+    mockedPrisma.user.findUnique.mockResolvedValue({
+      id: 1,
+      walletAddress: "GACCOUNTUSERADDRESS",
+      email: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deletedAt: null,
+      creator: null,
+    });
+
+    // Simulate batch 1 of size BATCH_SIZE and batch 2 of size 1
+    const batch1 = Array.from({ length: BATCH_SIZE }, (_, i) => ({
+      id: 1000 - i,
+      senderAddress: "GACCOUNTUSERADDRESS",
+      amount: 1,
+    }));
+    const batch2 = [{ id: 1000 - BATCH_SIZE, senderAddress: "GACCOUNTUSERADDRESS", amount: 2 }];
+
+    mockedPrisma.donation.findMany
+      .mockResolvedValueOnce(batch1)
+      .mockResolvedValueOnce(batch2);
+
+    const res = await request(app)
+      .get("/api/account/export")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(mockedPrisma.donation.findMany).toHaveBeenCalledTimes(2);
+    // Verify second call used cursor from end of first batch
+    expect(mockedPrisma.donation.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        cursor: { id: batch1[batch1.length - 1].id },
+        skip: 1,
+        take: BATCH_SIZE,
+      })
+    );
+    expect(res.body.donations.sent).toHaveLength(BATCH_SIZE + 1);
+  });
 });
 
 describe("POST /api/account/delete", () => {
@@ -184,6 +264,12 @@ describe("POST /api/account/delete", () => {
     expect(mockedPrisma.user.update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: { email: null, deletedAt: expect.any(Date) },
+    });
+    expect(mockedPrisma.oAuthIdentity.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 1 },
+    });
+    expect(mockedPrisma.magicLinkToken.deleteMany).toHaveBeenCalledWith({
+      where: { OR: [{ userId: 1 }, { email: "a@b.c" }] },
     });
     expect(mockedPrisma.donation.updateMany).toHaveBeenCalledWith({
       where: { senderAddress: "GACCOUNTUSERADDRESS", message: { not: null } },

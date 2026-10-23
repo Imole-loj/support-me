@@ -118,7 +118,13 @@ test suite locally if CI doesn't give you enough confidence on its own.
 
 ## Reporting Issues
 
-If you find a bug or want to propose a feature, open an issue with:
+Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.md) or
+[feature request](.github/ISSUE_TEMPLATE/feature_request.md) template when
+opening an issue. Both follow the project's Intro / What to be done /
+Acceptance criteria format. For support questions, see
+[testnet troubleshooting](docs/testnet-troubleshooting.md).
+
+If you find a bug or want to propose a feature, include:
 
 - Summary of the problem or feature
 - Steps to reproduce / expected behavior

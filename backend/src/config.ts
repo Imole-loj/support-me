@@ -27,6 +27,7 @@ export const config = {
   get executorSecretKey() { return process.env.EXECUTOR_SECRET_KEY?.trim() || ""; },
   get databaseUrl() { return process.env.DATABASE_URL?.trim() || ""; },
   get jwtSecret() { return process.env.JWT_SECRET?.trim() || ""; },
+  get cloudinaryCloudName() { return process.env.CLOUDINARY_CLOUD_NAME?.trim() || ""; },
 };
 
 export interface RateLimitConfig {

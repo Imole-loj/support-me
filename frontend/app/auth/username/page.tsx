@@ -51,7 +51,7 @@ export default function CreateUsernamePage() {
             'Authorization': `Bearer ${token}`,
           },
           body: JSON.stringify({
-            walletAddress: user?.walletAddress || '',
+            walletAddress: user?.walletAddress ?? null,
             displayName: displayName || username,
           }),
         }

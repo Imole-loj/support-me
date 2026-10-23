@@ -78,10 +78,10 @@ export async function completeTwitterAuth(code: string, state: string): Promise<
   }
   pendingStates.delete(state); // single-use, like the wallet challenge
 
-  const { accessToken, refreshToken } = await exchangeCodeForToken(config, code, pending.codeVerifier);
+  const { accessToken } = await exchangeCodeForToken(config, code, pending.codeVerifier);
   const profile = await fetchTwitterProfile(accessToken);
 
-  const user = await linkTwitterIdentity(profile, accessToken, refreshToken);
+  const user = await linkTwitterIdentity(profile);
   const creator = await prisma.creator.findUnique({ where: { userId: user.id } });
   const token = generateToken(user.id, user.walletAddress);
 
@@ -93,11 +93,7 @@ export async function completeTwitterAuth(code: string, state: string): Promise<
   };
 }
 
-async function linkTwitterIdentity(
-  profile: TwitterProfile,
-  accessToken: string,
-  refreshToken: string | undefined
-) {
+async function linkTwitterIdentity(profile: TwitterProfile) {
   const existing = await prisma.oAuthIdentity.findUnique({
     where: { provider_providerAccountId: { provider: PROVIDER, providerAccountId: profile.id } },
     include: { user: true },
@@ -114,7 +110,7 @@ async function linkTwitterIdentity(
     }
     await prisma.oAuthIdentity.update({
       where: { id: existing.id },
-      data: { accessToken, refreshToken },
+      data: { updatedAt: new Date() },
     });
     return existing.user;
   }
@@ -122,6 +118,7 @@ async function linkTwitterIdentity(
   // New Twitter identity: create a fresh account and link it in one
   // transaction, so a failure partway through never leaves an orphaned
   // OAuthIdentity row with no user, or vice versa.
+  // Third-party tokens are not persisted to database (#367).
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.create({ data: {} });
     await tx.oAuthIdentity.create({
@@ -129,8 +126,6 @@ async function linkTwitterIdentity(
         provider: PROVIDER,
         providerAccountId: profile.id,
         userId: user.id,
-        accessToken,
-        refreshToken,
       },
     });
     return user;

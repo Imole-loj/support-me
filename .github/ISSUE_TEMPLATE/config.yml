@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support and troubleshooting
+    url: https://github.com/ssupportme/support-me/blob/main/docs/testnet-troubleshooting.md
+    about: Read the documentation and troubleshooting guide for help using SupportMe.

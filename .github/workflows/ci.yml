@@ -111,6 +111,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Run Postgres integration tests
+        run: npm run test:integration
+
   frontend:
     name: Frontend (Next.js)
     runs-on: ubuntu-latest
@@ -135,6 +138,9 @@ jobs:
 
       - name: Type check
         run: npx tsc --noEmit
+
+      - name: Check translation message key parity
+        run: npm run check:i18n
 
       - name: Lint
         run: npm run lint
@@ -228,11 +234,11 @@ jobs:
   test-all:
     name: All tests passed
     runs-on: ubuntu-latest
-    needs: [env-example-drift, contracts, backend, frontend, e2e, dependency-review, type-drift]
     # dependency-review only runs on pull_request (see its own `if:` above),
     # so on a push to main it reports "skipped" rather than succeeding; allow
     # that specific outcome through rather than blocking test-all on it.
     if: always()
+    needs: [env-example-drift, contracts, backend, frontend, e2e, dependency-review, type-drift]
     steps:
       - name: Fail if any required job did not succeed or get skipped
         run: |

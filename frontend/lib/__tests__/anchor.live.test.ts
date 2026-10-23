@@ -3,6 +3,7 @@
 // wallet mocked, and jsdom's cross-realm Uint8Array trips up stellar-base.)
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { NETWORK_PASSPHRASE as NETWORK } from '@/lib/stellarNetwork';
 
 // LIVE smoke test for the SRT (SEP-24) cash-out / add-funds flow. It hits the
 // REAL SDF reference anchor (testanchor.stellar.org) and exercises the shipping
@@ -22,7 +23,6 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 
 const HOME_DOMAIN = process.env.NEXT_PUBLIC_ANCHOR_HOME_DOMAIN || 'testanchor.stellar.org';
 const ASSET_CODE = process.env.NEXT_PUBLIC_ANCHOR_ASSET_CODE || 'SRT';
-const NETWORK = StellarSdk.Networks.TESTNET;
 
 const keypair = StellarSdk.Keypair.random();
 

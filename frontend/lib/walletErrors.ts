@@ -96,6 +96,11 @@ export const WALLET_ERROR_TITLES: string[] = Object.values(CATEGORY_META).map((m
 
 // Ordered list of matchers. NO_WALLET wins over the others because messages
 // like "Freighter is not connected" must not be read as a user rejection.
+// WRONG_NETWORK_PATTERN is exported so lib/failures.ts can recognise the same
+// mismatch wording on signing errors raised mid-donation.
+export const WRONG_NETWORK_PATTERN =
+  /(wrong network|network (does not match|doesn't match|is different|mismatch)|network.*(passphrase|testnet|mainnet|public).*(match|mismatch)|passphrase.*(match|mismatch|invalid))/i;
+
 const PATTERNS: { type: WalletCategory; test: RegExp }[] = [
   {
     type: WALLET_CATEGORY.NO_WALLET,
@@ -109,8 +114,7 @@ const PATTERNS: { type: WalletCategory; test: RegExp }[] = [
   },
   {
     type: WALLET_CATEGORY.WRONG_NETWORK,
-    test:
-      /(wrong network|network (does not match|doesn't match|is different|mismatch)|network.*(passphrase|testnet|mainnet|public).*(match|mismatch)|passphrase.*(match|mismatch|invalid))/i,
+    test: WRONG_NETWORK_PATTERN,
   },
 ];
 

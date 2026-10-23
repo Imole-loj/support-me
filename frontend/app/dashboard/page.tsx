@@ -20,10 +20,7 @@ import { DashboardStats, type CreatorStats } from '@/components/DashboardStats';
 import { usePrices } from '@/lib/usePrices';
 import { formatUsd } from '@/lib/prices';
 import { API_URL } from '@/lib/api';
-
-const STELLAR_NETWORK = process.env.NEXT_PUBLIC_STELLAR_NETWORK || 'testnet';
-const explorerTxUrl = (hash: string) =>
-  `https://stellar.expert/explorer/${STELLAR_NETWORK}/tx/${hash}`;
+import { explorerTxUrl } from '@/lib/stellarNetwork';
 
 interface Donation {
   id: number | string;

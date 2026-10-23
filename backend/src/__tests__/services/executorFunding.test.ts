@@ -58,8 +58,13 @@ import { executorHealth } from "../../services/executorHealth";
 const mockedWithServer = withSorobanRpcServer as jest.Mock;
 const mockedBalance = getAccountBalanceXlm as jest.Mock;
 
+type ExecutorFundingTestAccess = {
+  keypair: Keypair;
+  ensureExecutorFunded(): Promise<void>;
+};
+
 function makeExecutor(): { keypair: Keypair; ensureExecutorFunded(): Promise<void> } {
-  const executor = new SubscriptionExecutor() as any;
+  const executor = new SubscriptionExecutor() as unknown as ExecutorFundingTestAccess;
   executor.keypair = Keypair.random();
   return executor;
 }

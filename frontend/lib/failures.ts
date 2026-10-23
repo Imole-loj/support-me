@@ -1,5 +1,6 @@
 import { DonationError } from './contract';
 import { troubleshootingUrl } from './docs';
+import { WRONG_NETWORK_PATTERN } from './walletErrors';
 
 /**
  * Shared copy for donation/subscription failure states, implementing the
@@ -26,6 +27,7 @@ export interface FlowFailure {
  */
 export const FAILURE_TITLES = {
   signatureDeclined: 'Signature declined',
+  wrongNetwork: 'Wrong network',
   notEnoughBalance: 'Not enough balance',
   transactionRejected: 'Transaction rejected',
   confirmationTimedOut: 'Confirmation timed out',
@@ -57,6 +59,26 @@ export function describeDonationFailure(err: unknown, flow: 'donate' | 'subscrib
 function describeFailureCopy(err: unknown, flow: 'donate' | 'subscribe'): Omit<FlowFailure, 'docsUrl'> {
   if (err instanceof DonationError) {
     if (err.type === 'wallet') {
+      // A network mismatch can surface as our own WrongNetworkError (thrown
+      // by lib/wallet before signing) or as a wallet-extension message that
+      // only matches the wrong-network heuristics — either way the user must
+      // switch networks, not "approve the request" like a plain decline.
+      const cause = err.cause;
+      const causeMessage =
+        cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : '';
+      if (
+        (cause instanceof Error && cause.name === 'WrongNetworkError') ||
+        WRONG_NETWORK_PATTERN.test(causeMessage) ||
+        WRONG_NETWORK_PATTERN.test(err.message || '')
+      ) {
+        return {
+          title: FAILURE_TITLES.wrongNetwork,
+          message:
+            'Your wallet is set to a different network than the Stellar Testnet, so the transaction was not sent. No funds were moved.',
+          action: 'Switch your wallet to the Stellar Testnet, then try again.',
+          retryable: true,
+        };
+      }
       return {
         title: FAILURE_TITLES.signatureDeclined,
         message:

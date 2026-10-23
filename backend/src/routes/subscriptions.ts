@@ -31,7 +31,7 @@ router.get(
       // Check if the caller is the target creator
       if (creatorUsername) {
         const creator = await prisma.creator.findUnique({ where: { username: creatorUsername } });
-        if (!creator || creator.walletAddress !== req.user.walletAddress) {
+        if (!creator?.walletAddress || creator.walletAddress !== req.user.walletAddress) {
           throw new UnauthorizedError("You are not authorized to view these subscriptions");
         }
       } else {

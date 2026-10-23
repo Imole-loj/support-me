@@ -137,7 +137,7 @@ describe("SubscriptionExecutor executor-side failures (#279)", () => {
   });
 
   it("does not penalize the subscriber when the executor account is unfunded", async () => {
-    const executor = new SubscriptionExecutor() as any;
+    const executor = new SubscriptionExecutor() as unknown as ExecutorTestAccess;
     executor.submitCharge = jest
       .fn()
       .mockRejectedValue(new Error("Account not found: G-EXECUTOR"));
@@ -153,7 +153,7 @@ describe("SubscriptionExecutor executor-side failures (#279)", () => {
   });
 
   it("does not penalize the subscriber when the executor cannot cover the fee", async () => {
-    const executor = new SubscriptionExecutor() as any;
+    const executor = new SubscriptionExecutor() as unknown as ExecutorTestAccess;
     executor.submitCharge = jest.fn().mockRejectedValue(new Error("insufficient fee"));
 
     await executor.charge(subscription);
@@ -163,7 +163,7 @@ describe("SubscriptionExecutor executor-side failures (#279)", () => {
   });
 
   it("still records a genuine on-chain failure against the subscriber and emails once", async () => {
-    const executor = new SubscriptionExecutor() as any;
+    const executor = new SubscriptionExecutor() as unknown as ExecutorTestAccess;
     executor.submitCharge = jest
       .fn()
       .mockRejectedValue(new Error("Transaction abc failed on-chain"));

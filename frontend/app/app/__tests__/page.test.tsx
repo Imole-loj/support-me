@@ -16,6 +16,8 @@ vi.mock('@/context/CreatorContext', () => ({
   useCreator: vi.fn(),
 }));
 
+const mockLoadAccount = vi.hoisted(() => vi.fn());
+
 vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@stellar/stellar-sdk')>();
   return {
@@ -23,11 +25,23 @@ vi.mock('@stellar/stellar-sdk', async (importOriginal) => {
     Horizon: {
       ...actual.Horizon,
       Server: class MockServer {
-        loadAccount = vi.fn().mockResolvedValue({
-          balances: [{ asset_type: 'native', balance: '100' }],
-        });
+        loadAccount = mockLoadAccount;
       },
     },
+  };
+});
+
+vi.mock('@/lib/assets', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/assets')>();
+  return {
+    ...actual,
+    availableAssetCodes: () => ['XLM', 'USDC'],
+    getAsset: (code: string) => ({
+      code,
+      label: code,
+      balanceMatcher: (b: any) =>
+        code === 'XLM' ? b.asset_type === 'native' : b.asset_code === code,
+    }),
   };
 });
 
@@ -51,6 +65,10 @@ describe('AppHubPage', () => {
   };
 
   beforeEach(() => {
+    mockLoadAccount.mockResolvedValue({
+      balances: [{ asset_type: 'native', balance: '100' }],
+    });
+
     mockUseAuth.mockReturnValue({
       user: { id: 42, walletAddress: 'GALICE' },
       token: 'mock-jwt-token',
@@ -237,6 +255,67 @@ describe('AppHubPage', () => {
 
       getItemSpy.mockRestore();
       setItemSpy.mockRestore();
+    });
+  });
+
+  describe('Partial USD total handling and caveat for unpriced assets (#168)', () => {
+    it('displays complete USD total with no caveat when all held assets are priced', async () => {
+      mockLoadAccount.mockResolvedValue({
+        balances: [{ asset_type: 'native', balance: '100' }],
+      });
+
+      render(<AppHubPage />);
+
+      // Reveal balances
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Show balance' })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Show balance' }));
+
+      // Switch to USD view
+      const usdToggle = await screen.findByRole('button', { name: 'Crypto' });
+      fireEvent.click(usdToggle);
+
+      await waitFor(() => {
+        expect(screen.getByText('$12.00')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('unpriced-caveat')).not.toBeInTheDocument();
+      expect(screen.queryByText(/asset not priced/i)).not.toBeInTheDocument();
+    });
+
+    it('indicates partial total and renders visible caveat when a held asset is missing price', async () => {
+      mockLoadAccount.mockResolvedValue({
+        balances: [
+          { asset_type: 'native', balance: '100' },
+          { asset_type: 'credit_alphanum4', asset_code: 'USDC', balance: '50' },
+        ],
+      });
+
+      render(<AppHubPage />);
+
+      // Reveal balances
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Show balance' })).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Show balance' }));
+
+      // In crypto view, unpriced asset is marked
+      await waitFor(() => {
+        expect(screen.getByText('Price unavailable')).toBeInTheDocument();
+      });
+
+      // Switch to USD view
+      const usdToggle = await screen.findByRole('button', { name: 'Crypto' });
+      fireEvent.click(usdToggle);
+
+      // Total shows ≈ prefix and caveat badge
+      await waitFor(() => {
+        expect(screen.getByText(/≈\s*\$12\.00/)).toBeInTheDocument();
+      });
+      const caveat = screen.getByTestId('unpriced-caveat');
+      expect(caveat).toBeInTheDocument();
+      expect(caveat).toHaveTextContent('+ 1 asset not priced');
+      expect(screen.getByText(/excludes USDC due to missing price data/i)).toBeInTheDocument();
     });
   });
 });

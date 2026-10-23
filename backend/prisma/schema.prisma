@@ -86,7 +86,7 @@ model Creator {
   userId        Int            @unique
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   username      String         @unique
-  walletAddress String
+  walletAddress String?
   displayName   String?
   bio           String?
   avatarUrl     String?
@@ -125,10 +125,11 @@ model Creator {
   goals         Goal[]
 
   @@index([walletAddress])
-  // A non-empty walletAddress is unique across creators (#276). That is a
+  // A connected walletAddress is unique across creators (#276). That is a
   // partial unique index ("walletAddress" <> '') created in migration
   // 20261018000000_creator_wallet_unique, which Prisma's schema language
-  // cannot express, so it is not declared here.
+  // cannot express, so it is not declared here. Unconnected wallets are null;
+  // a database check constraint prevents the former empty-string sentinel.
 }
 
 model Donation {

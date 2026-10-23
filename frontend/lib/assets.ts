@@ -1,6 +1,5 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
-
-const NETWORK_PASSPHRASE = StellarSdk.Networks.TESTNET;
+import { NETWORK_PASSPHRASE } from './stellarNetwork';
 
 // USDC/USDT are only available when their issuer is configured via env. On
 // testnet these are typically the SDF-issued test USDC

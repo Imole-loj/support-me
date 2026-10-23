@@ -87,7 +87,9 @@ async function main(): Promise<void> {
 
   const shutdownWithTimeout = (signal: string) => {
     const timeout = setTimeout(forceExit, shutdownTimeoutMs);
-    shutdown(signal).finally(() => clearTimeout(timeout));
+    void shutdown(signal)
+      .catch((error) => log("error", `Shutdown failed after ${signal}`, { error }))
+      .finally(() => clearTimeout(timeout));
   };
 
   process.on("SIGTERM", () => shutdownWithTimeout("SIGTERM"));

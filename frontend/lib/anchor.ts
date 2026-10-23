@@ -1,5 +1,6 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { signTransaction as signWithWallet } from './wallet';
+import { NETWORK_PASSPHRASE, horizonServer } from './stellarNetwork';
 
 // SEP-24 interactive withdraw against a Stellar anchor. Defaults to the SDF
 // reference anchor on testnet (testanchor.stellar.org), which issues the
@@ -8,9 +9,7 @@ import { signTransaction as signWithWallet } from './wallet';
 // go live; the code below is identical either way.
 const HOME_DOMAIN = process.env.NEXT_PUBLIC_ANCHOR_HOME_DOMAIN || 'testanchor.stellar.org';
 const ASSET_CODE = process.env.NEXT_PUBLIC_ANCHOR_ASSET_CODE || 'SRT';
-const NETWORK_PASSPHRASE = StellarSdk.Networks.TESTNET;
-
-const horizon = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
+const horizon = horizonServer;
 
 /** Resolved SEP-24/SEP-10 endpoints and asset metadata for one anchor. */
 export interface AnchorConfig {

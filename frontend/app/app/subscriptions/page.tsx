@@ -12,6 +12,7 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { API_URL } from '@/lib/api';
 import { fetchWithRetry, isNetworkError } from '@/lib/network';
 import { describeChargeFailure } from '@/lib/failures';
+import { explorerTxUrl } from '@/lib/stellarNetwork';
 
 interface Subscription {
   id: number;
@@ -200,6 +201,11 @@ function SubscriptionsList() {
                     <p className="text-xs text-red-600 font-bold mt-0.5">
                       Last charge failed — {describeChargeFailure(subscription.lastError)}
                     </p>
+                  )}
+                  {subscription.lastChargeTxHash && (
+                    <a href={explorerTxUrl(subscription.lastChargeTxHash)} target="_blank" rel="noopener noreferrer" className="text-xs underline text-primary">
+                      View last charge
+                    </a>
                   )}
                 </div>
 

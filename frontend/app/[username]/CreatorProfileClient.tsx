@@ -23,7 +23,9 @@ import {
 } from '@/lib/contract';
 import { availableAssetCodes, getAsset, type AssetCode } from '@/lib/assets';
 import { MIN_DONATION_AMOUNT } from '@/lib/donation';
-import { getPlatform } from '@/lib/socials';
+import { memoByteLength } from '@/lib/memo';
+import { getPlatform, isHttpUrl } from '@/lib/socials';
+import { explorerTxUrl, horizonServer } from '@/lib/stellarNetwork';
 import { API_URL } from '@/lib/api';
 import { fetchWithRetry } from '@/lib/network';
 import { describeDonationFailure, type FlowFailure } from '@/lib/failures';
@@ -35,14 +37,12 @@ import { getMessages, useDocumentLang, useLocalePreference, type Locale } from '
 import { THEME_LAYOUTS, themeStyle, type ProfileTheme } from '@/lib/theme';
 
 
-const HORIZON_URL = 'https://horizon-testnet.stellar.org';
-const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
 interface Creator {
   id: number;
   username: string;
   displayName: string | null;
-  walletAddress: string;
+  walletAddress: string | null;
   bio: string | null;
   avatarUrl: string | null;
   socialLinks: Record<string, string> | null;
@@ -323,7 +323,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
   // back to null when the wallet holds no trustline/balance for it.
   const loadAssetBalance = useCallback(async (address: string, code: string) => {
     try {
-      const account = await server.loadAccount(address);
+      const account = await horizonServer.loadAccount(address);
       setIsUnfunded(false);
       const asset = getAsset(code);
       let match;
@@ -336,7 +336,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
         match = account.balances.find((b: { asset_type?: string; asset_code?: string }) => {
           if (b.asset_type === 'native') return false;
           if (asset && asset.code === code && typeof asset.balanceMatcher === 'function') {
-            return asset.balanceMatcher(b);
+            return asset.balanceMatcher(b as StellarSdk.Horizon.HorizonApi.BalanceLine);
           }
           return b.asset_code === code;
         });
@@ -371,6 +371,20 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
     };
   }, [userAddress, assetCode, loadAssetBalance]);
 
+  // Re-reads the wallet's current network. Returns false (and raises the
+  // blocking notice) when it provably isn't Testnet; true otherwise —
+  // including when the wallet doesn't expose its network at all, in which
+  // case there is nothing to block on.
+  const ensureTestnetWallet = async (): Promise<boolean> => {
+    const onTestnet = await isWalletOnTestnet();
+    if (onTestnet === false) {
+      setWrongNetwork(true);
+      return false;
+    }
+    setWrongNetwork(false);
+    return true;
+  };
+
   const handleConnectWallet = async () => {
     setConnecting(true);
     try {
@@ -379,6 +393,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
       // address is null when the user closed the wallet picker without
       // connecting (see lib/wallet.ts) -- nothing to load or celebrate yet.
       if (!address) return;
+      if (!(await ensureTestnetWallet())) return;
       setBalance(await loadAssetBalance(address, assetCode));
       notify.success(t('walletConnected'));
     } catch (err) {
@@ -445,6 +460,9 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
       notify.error(t('cannotSendDonationTitle'), t('cannotSendDonationMessage'));
       return;
     }
+    // The user may have switched the wallet to Mainnet since connecting —
+    // check again before any transaction is built or signed.
+    if (!(await ensureTestnetWallet())) return;
 
     setSending(true);
     setTxStatus('building');
@@ -481,7 +499,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
 
       const txLink = (
         <a
-          href={`https://stellar.expert/explorer/testnet/tx/${hash}`}
+          href={explorerTxUrl(hash)}
           target="_blank"
           rel="noopener noreferrer"
           className="underline"
@@ -541,6 +559,11 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
         setUserAddress(address);
       }
       if (!address) {
+        setSending(false);
+        return;
+      }
+      // The wallet connected just above may itself be on the wrong network.
+      if (!(await ensureTestnetWallet())) {
         setSending(false);
         return;
       }
@@ -680,7 +703,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
   }
 
   const socialLinks = creator.socialLinks || {};
-  const socialEntries = Object.entries(socialLinks).filter(([, url]) => url);
+  const socialEntries = Object.entries(socialLinks).filter(([, url]) => isHttpUrl(url));
 
   const displayName = creator.displayName || creator.username;
   const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://support-mee.vercel.app';
@@ -840,7 +863,11 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
             </span>
           </div>
 
-          {sending ? (
+          {!creator.walletAddress ? (
+            <p role="status" className="text-sm text-muted font-medium">
+              {t('payoutUnavailable')}
+            </p>
+          ) : sending ? (
             <div className="py-2">
               <TipJarLoader fullScreen={false} />
               {(subscribeStep || (txStatus && statusLabels[txStatus])) && (
@@ -848,6 +875,18 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                   {subscribeStep ?? statusLabels[txStatus as string]}
                 </p>
               )}
+            </div>
+          ) : wrongNetwork ? (
+            <div role="alert" className="card-brutal bg-brand-pink p-4 space-y-3">
+              <h3 className="font-extrabold text-ink">{t('wrongNetworkTitle')}</h3>
+              <p className="text-sm text-ink font-medium">{t('wrongNetworkMessage')}</p>
+              <button
+                type="button"
+                onClick={handleRecheckNetwork}
+                className="btn-brutal btn-brutal-primary w-full min-h-[48px]"
+              >
+                {t('wrongNetworkRecheck')}
+              </button>
             </div>
           ) : !userAddress ? (
             <button
@@ -895,7 +934,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         rel="noopener noreferrer"
                         className="underline"
                       >
-                        Circle's faucet
+                        Circle&apos;s faucet
                       </a>
                       . Test tokens have no real value.
                     </p>
@@ -935,7 +974,9 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                 const parsedAmt = parseFloat(donationAmount);
                 const isAmountValid = Number.isFinite(parsedAmt) && parsedAmt >= MIN_DONATION_AMOUNT;
                 const isLargeDonation = Number.isFinite(parsedAmt) && parsedAmt >= LARGE_DONATION_THRESHOLD;
-                const canSubmit = isAmountValid && (!isLargeDonation || largeDonationConfirmed);
+                const memoBytes = memoByteLength(donationMessage);
+                const memoTooLong = memoBytes > MAX_MEMO_LENGTH;
+                const canSubmit = isAmountValid && (!isLargeDonation || largeDonationConfirmed) && !memoTooLong;
 
                 return (
                   <>
@@ -1016,19 +1057,17 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         id="donation-message"
                         value={donationMessage}
                         onChange={(e) => setDonationMessage(e.target.value)}
-                        maxLength={MAX_MEMO_LENGTH}
                         placeholder={t('messagePlaceholder')}
                         disabled={recurring}
                         className="input-brutal text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         rows={3}
                       />
-                      {recurring ? (
-                        <p className="text-xs text-muted mt-1 font-medium" data-testid="recurring-message-hint">
-                          {t('recurringMessageHint')}
-                        </p>
-                      ) : (
-                        <p className="text-xs text-muted mt-1 font-medium">
-                          {t('characterCount', { count: donationMessage.length, max: MAX_MEMO_LENGTH })}
+                      <p className="text-xs text-muted mt-1 font-medium">
+                        {memoBytes}/{MAX_MEMO_LENGTH} bytes
+                      </p>
+                      {memoTooLong && (
+                        <p role="alert" className="text-xs text-red-600 mt-1">
+                          Message must be {MAX_MEMO_LENGTH} bytes or fewer.
                         </p>
                       )}
                     </div>

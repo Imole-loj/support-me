@@ -7,10 +7,10 @@ does not filter by changed paths, so all jobs run for each pull request.
 
 ## Prerequisites
 
-- Node.js 20 (see [`.nvmrc`](.nvmrc), the version CI uses via
+- Node.js 24 (see [`.nvmrc`](.nvmrc), the version CI uses via
   `node-version-file`). npm 11+ for the frontend (`npm install -g npm@11` —
   its lockfile needs npm 11's resolver, which is why CI force-installs it
-  before `npm ci`) and npm 10+ for the backend (no upgrade needed; Node 20's
+  before `npm ci`) and npm 10+ for the backend (no upgrade needed; Node 24's
   bundled npm already satisfies this).
 - Rust stable and `rustup` for the contract workspace. CI installs the
   `wasm32v1-none` target for the contract build.
@@ -114,6 +114,42 @@ blanket module- or crate-level allow.
 
 The Cargo workspace includes the donation and creator-registry contracts, as
 well as shared contract code.
+
+## Testnet Integration Tests
+
+SupportMe includes an end-to-end integration test suite that exercises the full
+on-chain lifecycle against a live Soroban RPC on Stellar Testnet:
+
+- Funds fresh donor, creator, and executor accounts via Friendbot.
+- Deploys and initializes fresh instances of `creator-registry` and `donation` contracts.
+- Exercises creator registration, one-time XLM donation, SAC allowance approval, recurring subscription creation, charging subscription by authorized executor, and subscription cancellation.
+- Ingests on-chain events via `server.getEvents` and feeds them through `SorobanEventListener.processEvent` to validate event decoding.
+
+### Running Locally
+
+Prerequisites:
+
+- Contracts compiled to WASM: `cargo build --workspace --target wasm32v1-none --release`
+- Stellar CLI installed: `stellar --version`
+- Backend dependencies installed: `cd backend && npm ci`
+
+Run the integration suite from the `backend/` directory:
+
+```sh
+cd backend
+npm run test:testnet
+```
+
+Optionally specify pre-deployed contracts or a custom RPC endpoint:
+
+```sh
+DONATION_CONTRACT_ID=<id> CREATOR_REGISTRY_CONTRACT_ID=<id> npm run test:testnet
+```
+
+### Scheduled CI
+
+A dedicated GitHub Actions workflow ([.github/workflows/testnet-integration.yml](.github/workflows/testnet-integration.yml))
+runs nightly and on manual `workflow_dispatch`. It includes automatic retries to account for transient testnet network flakiness.
 
 ## What CI Runs
 

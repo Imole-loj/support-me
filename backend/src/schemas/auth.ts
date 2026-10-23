@@ -7,6 +7,7 @@ export const challengeSchema = z.object({
 
 export const verifySchema = z.object({
   walletAddress: stellarAddress,
+  challengeId: z.string().min(1, "challengeId is required when provided").optional(),
   signedMessage: z.string().min(1, "signedMessage is required"),
 });
 

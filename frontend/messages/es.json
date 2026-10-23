@@ -30,9 +30,13 @@
     "testnetBadge": "Testnet",
     "testnetTooltip": "Esta aplicación funciona en la Testnet de Stellar; no se usan fondos reales.",
     "connectWallet": "Conectar billetera",
+    "payoutUnavailable": "Este creador aún no acepta propinas porque no ha conectado una billetera para recibir pagos. Vuelve más tarde.",
     "connecting": "Conectando…",
     "walletConnected": "¡Billetera conectada!",
     "walletLabel": "Billetera: {address}…",
+    "wrongNetworkTitle": "Tu wallet está en la red incorrecta",
+    "wrongNetworkMessage": "Cámbialo a la Stellar Testnet para continuar.",
+    "wrongNetworkRecheck": "Comprobar de nuevo",
     "installWalletTitle": "Instala una billetera de Stellar para continuar",
     "assetLegend": "Activo",
     "amountLabel": "Cantidad ({asset})",
@@ -82,6 +86,6 @@
   },
   "languageSwitcher": {
     "label": "Idioma",
-    "scopeNote": "Solo se traducen este perfil y el formulario de donación. Las demás páginas siguen en inglés."
+    "scopeNote": "Se traducen este perfil y el formulario de donación. Las demás páginas están actualmente en inglés."
   }
 }

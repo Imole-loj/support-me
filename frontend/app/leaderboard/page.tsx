@@ -19,6 +19,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { TestnetBadge } from '@/components/TestnetBadge';
 import { useAuth } from '@/context/AuthContext';
 import { API_URL } from '@/lib/api';
+import { explorerAccountUrl } from '@/lib/stellarNetwork';
 
 export type LeaderboardType = 'creators' | 'supporters';
 export type CurrencyFilter = 'XLM' | 'USDC' | 'EURC';
@@ -409,7 +410,7 @@ export default function LeaderboardPage() {
                             </Link>
                           ) : (
                             <a
-                              href={`https://stellar.expert/explorer/testnet/account/${entry.senderAddress}`}
+                              href={explorerAccountUrl(entry.senderAddress)}
                               target="_blank"
                               rel="noopener noreferrer"
                               aria-label={`View explorer details for ${sliceAddress(entry.senderAddress)}`}

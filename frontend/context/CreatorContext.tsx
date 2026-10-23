@@ -10,7 +10,7 @@ interface Creator {
   userId: number;
   username: string;
   displayName: string;
-  walletAddress: string;
+  walletAddress: string | null;
   avatarUrl: string | null;
   donationGoal: number | null;
   acceptsXlm: boolean;
@@ -39,13 +39,16 @@ export function CreatorProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     const fetchCreator = async () => {
-      if (!user || !token) {
+      if (!user) {
         if (active) setLoading(false);
         return;
       }
       try {
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
         const res = await fetch(`${API_URL}/api/creators/me`, {
-          headers: { Authorization: `Bearer ${token}` },
+          credentials: 'include',
+          headers,
         });
         if (res.status === 404) {
           if (active) setCreator(null);

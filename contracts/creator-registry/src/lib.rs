@@ -48,17 +48,6 @@ const USERNAME_KEY: Symbol = symbol_short!("uname");
 /// Maximum username length, in bytes.
 pub const MAX_USERNAME_LENGTH: u32 = 32;
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum RegistryError {
-    EmptyUsername = 1,
-    UsernameTooLong = 2,
-    InvalidUsernameChars = 3,
-    UsernameTaken = 4,
-    UnsupportedAction = 5,
-}
-
 /// Emitted whenever a new creator profile is registered.
 #[contractevent(topics = ["created"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +136,11 @@ pub enum RegistryError {
     CallerNotAuthorized = 15,
     InvalidGoal = 16,
     Overflow = 17,
+    EmptyUsername = 18,
+    UsernameTooLong = 19,
+    InvalidUsernameChars = 20,
+    UsernameTaken = 21,
+    UnsupportedAction = 22,
 }
 
 #[contract]
@@ -154,6 +148,33 @@ pub struct CreatorRegistryContract;
 
 #[contractimpl]
 impl CreatorRegistryContract {
+    /// Initialize the registry atomically as part of deployment.
+    pub fn __constructor(
+        env: Env,
+        admins: Vec<Address>,
+        threshold: u32,
+        timelock_delay: u64,
+        donation_contract: Address,
+    ) {
+        validate_admin_set(&admins, threshold);
+        let primary_admin = admins.get(0).unwrap();
+        env.storage().instance().set(&ADMIN_KEY, &primary_admin);
+        env.storage().instance().set(&ADMINS_KEY, &admins);
+        env.storage().instance().set(&THRESHOLD_KEY, &threshold);
+        env.storage()
+            .instance()
+            .set(&TIMELOCK_DELAY_KEY, &timelock_delay);
+        env.storage()
+            .instance()
+            .set(&DONATION_KEY, &donation_contract);
+        extend_instance_ttl(&env);
+    }
+
+    /// Permissionless instance keep-alive for quiet periods.
+    pub fn bump(env: Env) {
+        extend_instance_ttl(&env);
+    }
+
     /// One-time setup. `donation_contract` is the only address that will be
     /// permitted to call `record_donation`.
     pub fn initialize(env: Env, admin: Address, donation_contract: Address) {
@@ -270,6 +291,14 @@ impl CreatorRegistryContract {
             Some(t) => t,
             None => soroban_sdk::panic_with_error!(&env, RegistryError::Overflow),
         };
+        if !Self::is_supported_action(&action) {
+            soroban_sdk::panic_with_error!(&env, RegistryError::UnsupportedAction);
+        }
+        extend_instance_ttl(&env);
+        let expires_at = match now.checked_add(ADMIN_PROPOSAL_TTL_SECONDS) {
+            Some(timestamp) => timestamp,
+            None => soroban_sdk::panic_with_error!(&env, RegistryError::Overflow),
+        };
 
         let proposal = AdminProposal {
             id: prop_id,
@@ -313,6 +342,7 @@ impl CreatorRegistryContract {
         if !Self::is_admin(env.clone(), admin.clone()) {
             soroban_sdk::panic_with_error!(&env, RegistryError::Unauthorized);
         }
+        extend_instance_ttl(&env);
 
         let mut proposal: AdminProposal =
             match env.storage().persistent().get(&(PROPOSAL_KEY, proposal_id)) {
@@ -320,6 +350,9 @@ impl CreatorRegistryContract {
                 None => soroban_sdk::panic_with_error!(&env, RegistryError::ProposalNotFound),
             };
         if proposal.executed {
+            soroban_sdk::panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
+        }
+        if proposal.cancelled {
             soroban_sdk::panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
 
@@ -425,19 +458,26 @@ impl CreatorRegistryContract {
         if proposal.executed {
             soroban_sdk::panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
         }
+        if proposal.cancelled {
+            soroban_sdk::panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
+        }
 
         let threshold: u32 = match env.storage().instance().get(&THRESHOLD_KEY) {
             Some(t) => t,
             None => soroban_sdk::panic_with_error!(&env, RegistryError::NotInitialized),
         };
-        if proposal.approvals_count < threshold {
+        if Self::count_current_admin_votes(&env, APPROVAL_KEY, proposal_id) < threshold {
             soroban_sdk::panic_with_error!(&env, RegistryError::Unauthorized);
         }
 
         let now = env.ledger().timestamp();
+        if now > proposal.expires_at {
+            soroban_sdk::panic_with_error!(&env, RegistryError::ProposalAlreadyExecuted);
+        }
         if now < proposal.eta {
             soroban_sdk::panic_with_error!(&env, RegistryError::TimelockNotElapsed);
         }
+        extend_instance_ttl(&env);
 
         match proposal.action.clone() {
             AdminAction::SetDonationContract(target) => {
@@ -478,7 +518,7 @@ impl CreatorRegistryContract {
             // Rejected in `propose_admin_action`; refuse to mark them executed
             // in case one was stored before that check existed.
             AdminAction::SetExecutor(_) | AdminAction::Pause | AdminAction::Unpause => {
-                panic_with_error!(&env, RegistryError::UnsupportedAction);
+                soroban_sdk::panic_with_error!(&env, RegistryError::UnsupportedAction);
             }
         }
 
@@ -497,6 +537,7 @@ impl CreatorRegistryContract {
     /// Point the registry at a new donation contract (e.g. after a
     /// redeployment). Enforces multi-sig when threshold > 1.
     pub fn set_donation_contract(env: Env, donation_contract: Address) {
+        extend_instance_ttl(&env);
         let threshold: u32 = env.storage().instance().get(&THRESHOLD_KEY).unwrap_or(1);
         if threshold == 1 {
             let admin: Address = match env.storage().instance().get(&ADMIN_KEY) {
@@ -517,6 +558,15 @@ impl CreatorRegistryContract {
     /// or `-`, and not already taken by another creator.
     pub fn register_creator(env: Env, creator: Address, username: String) -> CreatorProfile {
         creator.require_auth();
+        extend_instance_ttl(&env);
+        Self::validate_username(&env, &username);
+        let username_key = (USERNAME_KEY, username.clone());
+        if let Some(existing_address) = env.storage().persistent().get::<_, Address>(&username_key)
+        {
+            if existing_address != creator {
+                soroban_sdk::panic_with_error!(&env, RegistryError::UsernameTaken);
+            }
+        }
 
         let profile = if let Some(p) = env
             .storage()
@@ -524,7 +574,7 @@ impl CreatorRegistryContract {
             .get::<_, CreatorProfile>(&creator)
         {
             // If the profile exists, it must be a placeholder created by record_donation
-            if p.username.len() != 0 {
+            if !p.username.is_empty() {
                 soroban_sdk::panic_with_error!(&env, RegistryError::AlreadyRegistered);
             }
             CreatorProfile {
@@ -577,6 +627,7 @@ impl CreatorRegistryContract {
     /// call this, and only to report a donation it just settled on-chain.
     pub fn record_donation(env: Env, caller: Address, creator: Address, amount: i128) {
         caller.require_auth();
+        extend_instance_ttl(&env);
 
         let authorized_donation_contract: Address =
             match env.storage().instance().get(&DONATION_KEY) {
@@ -632,13 +683,14 @@ impl CreatorRegistryContract {
     /// Sets or updates a creator's funding goal. Must be authenticated by the creator.
     pub fn set_goal(env: Env, creator: Address, goal_amount: i128) {
         creator.require_auth();
+        extend_instance_ttl(&env);
         if goal_amount < 0 {
             soroban_sdk::panic_with_error!(&env, RegistryError::InvalidGoal);
         }
 
-        env.storage()
-            .persistent()
-            .set(&(GOAL_KEY, creator.clone()), &goal_amount);
+        let goal_key = (GOAL_KEY, creator.clone());
+        env.storage().persistent().set(&goal_key, &goal_amount);
+        extend_persistent_ttl(&env, &goal_key);
 
         GoalUpdatedEvent {
             creator,
@@ -697,17 +749,17 @@ impl CreatorRegistryContract {
     fn validate_username(env: &Env, username: &String) {
         let len = username.len();
         if len == 0 {
-            panic_with_error!(env, RegistryError::EmptyUsername);
+            soroban_sdk::panic_with_error!(env, RegistryError::EmptyUsername);
         }
         if len > MAX_USERNAME_LENGTH {
-            panic_with_error!(env, RegistryError::UsernameTooLong);
+            soroban_sdk::panic_with_error!(env, RegistryError::UsernameTooLong);
         }
         let mut buf = [0u8; MAX_USERNAME_LENGTH as usize];
         let bytes = &mut buf[..len as usize];
         username.copy_into_slice(bytes);
         for b in bytes.iter() {
             if !matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
-                panic_with_error!(env, RegistryError::InvalidUsernameChars);
+                soroban_sdk::panic_with_error!(env, RegistryError::InvalidUsernameChars);
             }
         }
     }
@@ -818,7 +870,6 @@ mod tests {
         let impostor = Address::generate(&env);
         let creator = Address::generate(&env);
 
-        client.initialize(&admin, &donation_contract);
         let res = client.try_record_donation(&impostor, &creator, &1000);
         assert_eq!(
             res.unwrap_err().unwrap(),
@@ -830,13 +881,7 @@ mod tests {
     fn test_initialize_twice_panics() {
         let env = Env::default();
         env.mock_all_auths();
-        let (client, admin, _) = setup(&env);
-
-        let attacker = Address::generate(&env);
-        let attacker_donation = Address::generate(&env);
-        let attacker_admins = vec![&env, attacker.clone()];
-
-        client.initialize(&admin, &donation_contract);
+        let (client, admin, donation_contract) = setup(&env);
         let res = client.try_initialize(&admin, &donation_contract);
         assert_eq!(
             res.unwrap_err().unwrap(),
@@ -951,8 +996,6 @@ mod tests {
         env.mock_all_auths();
         let (client, _, donation_contract) = setup(&env);
         let creator = Address::generate(&env);
-
-        client.initialize(&admin, &donation_contract);
 
         // Donation comes first, creating a placeholder profile
         client.record_donation(&donation_contract, &creator, &1000);

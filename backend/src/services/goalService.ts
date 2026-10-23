@@ -1,5 +1,14 @@
 import { Prisma, Goal, RecurrenceInterval } from "@prisma/client";
 import prisma from "../prisma";
+import { toAmount, MoneyValue } from "../lib/money";
+
+export function formatGoalAmounts<T extends { targetAmount?: any; currentAmount?: any }>(goal: T): T {
+  return {
+    ...goal,
+    ...(goal.targetAmount !== undefined ? { targetAmount: toAmount(goal.targetAmount) } : {}),
+    ...(goal.currentAmount !== undefined ? { currentAmount: toAmount(goal.currentAmount) } : {}),
+  };
+}
 
 /**
  * Shared goal logic used by the donation-recording routes
@@ -42,7 +51,7 @@ export async function applyDonationToGoals(
   client: Prisma.TransactionClient,
   creatorId: number,
   currency: string,
-  amount: number
+  amount: MoneyValue
 ): Promise<Goal[]> {
   const matchingGoals = await client.goal.findMany({
     where: { creatorId, currency, status: "ACTIVE" },
@@ -73,7 +82,7 @@ export async function applyDonationToGoals(
 async function applyAmountToGoal(
   client: Prisma.TransactionClient,
   goal: Goal,
-  amount: number
+  amount: MoneyValue
 ): Promise<Goal | null> {
   // Claim + increment in one atomic statement: only while the goal is still
   // ACTIVE and below its target. The amount is added by the database, never
@@ -100,8 +109,11 @@ async function applyAmountToGoal(
   }
 
   const updated = await client.goal.findUnique({ where: { id: goal.id } });
-  // The increment alone didn't carry the goal to its target.
-  if (!updated || updated.currentAmount < goal.targetAmount) return null;
+  // The increment alone didn't carry the goal to its target (#372: exact decimal arithmetic).
+  if (!updated) return null;
+  const current = new Prisma.Decimal(updated.currentAmount);
+  const target = new Prisma.Decimal(goal.targetAmount);
+  if (current.lt(target)) return null;
 
   if (goal.recurring) {
     // A recurring goal stays ACTIVE past its target — "completed" isn't a

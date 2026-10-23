@@ -4,7 +4,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import CreatorProfileClient from '@/app/[username]/CreatorProfileClient';
 import { useAuth } from '@/context/AuthContext';
-import { connectWallet } from '@/lib/wallet';
+import { connectWallet, isWalletOnTestnet } from '@/lib/wallet';
 
 // CreatorProfileClient unwraps the `params` prop with React's use(), which
 // suspends on an unresolved promise — App Router provides a Suspense
@@ -39,6 +39,7 @@ vi.mock('@hugeicons/core-free-icons', async () => {
 vi.mock('@/lib/wallet', () => ({
   connectWallet: vi.fn(),
   disconnectWallet: vi.fn(),
+  isWalletOnTestnet: vi.fn(),
 }));
 
 vi.mock('@/lib/notify', () => ({
@@ -151,6 +152,7 @@ class FakeLocalStorage {
 
 const mockUseAuth = vi.mocked(useAuth);
 const mockConnectWallet = vi.mocked(connectWallet);
+const mockIsWalletOnTestnet = vi.mocked(isWalletOnTestnet);
 
 const baseCreator = {
   id: 1,
@@ -197,6 +199,9 @@ function mockFetchSequence(handlers: Record<string, unknown>) {
 describe('CreatorProfileClient', () => {
   beforeEach(() => {
     mockLoadAccount.mockResolvedValue({ balances: [] });
+    // Unknown network by default: the wallet doesn't report one, so nothing
+    // is blocked (tests override this to simulate a Mainnet wallet).
+    mockIsWalletOnTestnet.mockResolvedValue(null);
     mockUseAuth.mockReturnValue({
       user: null,
       token: null,

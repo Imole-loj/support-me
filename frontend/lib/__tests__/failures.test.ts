@@ -24,6 +24,36 @@ describe('describeDonationFailure', () => {
     expect(failure.retryable).toBe(true);
   });
 
+  it('maps a WrongNetworkError cause to switch-network guidance, not "signature declined"', () => {
+    const cause = Object.assign(
+      new Error(
+        'Wrong network: your wallet is set to a different network than the Stellar Testnet.'
+      ),
+      { name: 'WrongNetworkError' }
+    );
+    const failure = describeDonationFailure(
+      new DonationError('wallet', 'Signing was cancelled or failed.', cause),
+      'donate'
+    );
+    expect(failure.title).toBe('Wrong network');
+    expect(failure.message).toMatch(/different network/i);
+    expect(failure.action).toMatch(/testnet/i);
+    expect(failure.retryable).toBe(true);
+  });
+
+  it('maps wallet-kit mismatch wording on the error itself to wrong-network guidance', () => {
+    const failure = describeDonationFailure(
+      new DonationError(
+        'wallet',
+        'Wrong network: the network does not match the passphrase the transaction was built with.',
+        undefined
+      ),
+      'donate'
+    );
+    expect(failure.title).toBe('Wrong network');
+    expect(failure.action).toMatch(/testnet/i);
+  });
+
   it('maps insufficient balance to a fund-or-lower recovery', () => {
     const failure = describeDonationFailure(
       new DonationError(

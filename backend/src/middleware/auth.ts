@@ -1,7 +1,7 @@
 import { Request, RequestHandler } from 'express';
 import * as jwt from 'jsonwebtoken';
 import { UnauthorizedError } from '../errors/AppError';
-import { getJwtSecret } from '../config';
+import { getJwtSecret, getAllowedOrigins } from '../config';
 import prisma from '../prisma';
 import { TtlCache } from '../services/ttlCache';
 import { asyncHandler } from './asyncHandler';
@@ -45,6 +45,12 @@ async function isUserDeleted(userId: number): Promise<boolean> {
   return cached !== null;
 }
 
+export function parseCookie(header: string | undefined, key: string): string | undefined {
+  if (!header) return undefined;
+  const match = header.match(new RegExp(`(?:^|;\\s*)${key}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
+
 // Typed as a plain `RequestHandler` (not `(req: AuthRequest, ...) => void`) so
 // it can be passed straight to `router.use`/`router.get` etc. without an
 // `as any` cast at every call site: a handler accepting the narrower
@@ -53,10 +59,21 @@ async function isUserDeleted(userId: number): Promise<boolean> {
 // Express instance. The cast narrows in exactly one place instead of 16.
 export const authMiddleware: RequestHandler = asyncHandler(async (req, res, next) => {
   const authReq = req as AuthRequest;
-  const token = authReq.headers.authorization?.split(' ')[1];
+  const authHeader = authReq.headers.authorization?.split(' ')[1];
+  const cookieToken = parseCookie(req.headers.cookie, 'token');
+  const token = authHeader || cookieToken;
 
   if (!token) {
     return next(new UnauthorizedError('No token provided'));
+  }
+
+  // CSRF protection for cookie-based state-changing requests (#366)
+  if (!authHeader && cookieToken && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    const origin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
+    const allowed = getAllowedOrigins().map((o) => o.replace(/\/$/, ''));
+    if (origin && !allowed.includes(origin.replace(/\/$/, ''))) {
+      return next(new UnauthorizedError('Cross-site request forgery blocked'));
+    }
   }
 
   let decoded: { id: number; walletAddress: string | null };

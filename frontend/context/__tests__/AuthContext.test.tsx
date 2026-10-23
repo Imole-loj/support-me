@@ -88,7 +88,8 @@ describe('AuthContext', () => {
     });
     expect(result.current.token).toBe('jwt-token');
     expect(result.current.user).toEqual({ id: 1, walletAddress: 'GABC' });
-    expect(localStorage.getItem('authToken')).toBe('jwt-token');
+    expect(localStorage.getItem('authToken')).toBeNull();
+    expect(localStorage.getItem('authUser')).toBeTruthy();
   });
 
   it('throws when the sign-in challenge fails', async () => {
@@ -166,7 +167,8 @@ describe('AuthContext', () => {
         hasProfile: false,
       });
       expect(result.current.token).toBe('twitter-jwt');
-      expect(localStorage.getItem('authToken')).toBe('twitter-jwt');
+      expect(localStorage.getItem('authToken')).toBeNull();
+      expect(localStorage.getItem('authUser')).toBeTruthy();
     });
 
     it('throws when the state is invalid or expired', async () => {
@@ -244,7 +246,8 @@ describe('AuthContext', () => {
         username: 'you',
       });
       expect(result.current.token).toBe('magic-link-jwt');
-      expect(localStorage.getItem('authToken')).toBe('magic-link-jwt');
+      expect(localStorage.getItem('authToken')).toBeNull();
+      expect(localStorage.getItem('authUser')).toBeTruthy();
     });
 
     it('throws when the token has already been used', async () => {

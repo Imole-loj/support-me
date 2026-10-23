@@ -65,11 +65,15 @@ are implemented in [`auth.ts`](../backend/src/routes/auth.ts).
   used again, upserts the wallet user, checks whether that user has a creator
   profile, and issues a JWT. The response contains `{ user, token,
   hasProfile, username }`.
-6. The frontend keeps the session in the auth context and writes `authToken`
-  and `authUser` to `localStorage`. On mount, `AuthProvider` restores those
-  values. Authenticated API calls send the JWT as a bearer token; the backend
-  verifies it in [`auth.ts`](../backend/src/middleware/auth.ts). Logging out
-  clears the stored session and disconnects the wallet.
+6. The frontend keeps the session user in the auth context and writes `authUser`
+  to `localStorage`. The session JWT is issued as an `httpOnly`, `Secure`
+  (in production), `SameSite=Lax` cookie and is not stored in `localStorage`
+  (#366). Authenticated API calls send credentials (`credentials: 'include'`)
+  or the JWT as a Bearer token; the backend verifies either in
+  [`auth.ts`](../backend/src/middleware/auth.ts). State-changing requests using
+  cookie authentication require matching `Origin` or `Referer` headers to
+  protect against CSRF attacks. Logging out (`POST /api/auth/logout`) clears the
+  session cookie server-side, clears local storage, and disconnects the wallet.
 
 ```mermaid
 sequenceDiagram
@@ -95,8 +99,8 @@ sequenceDiagram
    API->>API: Verify SHA-256 signed-message signature
    API->>Store: Delete challenge after successful verification
    API->>DB: Upsert user and find creator profile
-   API-->>Frontend: { user, token, hasProfile, username }
-   Frontend->>Frontend: Store session in context and localStorage
+   API-->>Frontend: { user, token, hasProfile, username } + Set-Cookie (HttpOnly, SameSite=Lax)
+   Frontend->>Frontend: Store session in context and authUser in localStorage (no token in localStorage)
 ```
 
 Challenges are held in the backend process's bounded in-memory
@@ -303,6 +307,13 @@ explicitly, for example
 
 ## Security notes
 
+- **Session cookies and CSRF protection**: session JWTs are delivered as `httpOnly`,
+  `Secure` (in production), `SameSite=Lax` cookies, preventing JavaScript and
+  third-party scripts from reading session tokens via XSS (#366). State-changing
+  requests (`POST`, `PUT`, `DELETE`, `PATCH`) authenticated via cookies verify the
+  request's `Origin` or `Referer` against the allowed frontend origins to guard
+  against CSRF attacks. Signing out (`POST /api/auth/logout`) and account deletion
+  invalidate and clear the cookie server-side.
 - **OAuth state** is opaque, single-use, checked server-side, and expires after
   10 minutes; the PKCE verifier never leaves the backend.
 - **Twitter identities** are linked by Twitter's numeric user id, not by email,

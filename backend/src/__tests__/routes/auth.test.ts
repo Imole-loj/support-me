@@ -327,3 +327,34 @@ describe("GET /api/auth/twitter/callback (#14)", () => {
     expect(res.status).toBe(500);
   });
 });
+
+describe("POST /api/auth/logout & Cookie Sessions (#366)", () => {
+  it("clears the auth cookie on logout", async () => {
+    const res = await request(app).post("/api/auth/logout");
+
+    expect(res.status).toBe(200);
+    expect(res.body.message).toBe("Logged out successfully");
+    const cookieHeader = res.headers["set-cookie"];
+    expect(cookieHeader).toBeDefined();
+    expect(cookieHeader[0]).toMatch(/token=;/);
+  });
+
+  it("sets httpOnly cookie on successful magic link verification", async () => {
+    mockedVerifyMagicLink.mockResolvedValueOnce({
+      user: { id: 10, walletAddress: null, email: "cookie@example.com" },
+      token: "mock-session-jwt",
+      hasProfile: false,
+    });
+
+    const res = await request(app)
+      .post("/api/auth/magic-link/verify")
+      .send({ token: "valid-token" });
+
+    expect(res.status).toBe(200);
+    const cookieHeader = res.headers["set-cookie"];
+    expect(cookieHeader).toBeDefined();
+    expect(cookieHeader[0]).toContain("token=mock-session-jwt");
+    expect(cookieHeader[0]).toContain("HttpOnly");
+    expect(cookieHeader[0]).toContain("SameSite=Lax");
+  });
+});

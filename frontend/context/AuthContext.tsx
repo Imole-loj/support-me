@@ -97,10 +97,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Every sign-in method (wallet, Twitter, magic link) ends the same way:
   // the backend returns the same LoginResult shape, so persisting the
   // session is identical regardless of how the user proved their identity.
+  // Session tokens are held in httpOnly cookies (#366) and not in localStorage.
   const persistSession = (data: LoginResult): LoginResult => {
     setToken(data.token);
     setUser(data.user);
-    localStorage.setItem('authToken', data.token);
+    localStorage.removeItem('authToken');
     localStorage.setItem('authUser', JSON.stringify(data.user));
     return data;
   };
@@ -118,6 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ walletAddress: address }),
+      credentials: 'include',
     });
     if (!challengeRes.ok) {
       const error = await challengeRes.json();
@@ -131,6 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ walletAddress: address, signedMessage }),
+      credentials: 'include',
     });
     if (!verifyRes.ok) {
       const error = await verifyRes.json();
@@ -142,7 +145,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const getTwitterRedirectUrl = async (): Promise<string> => {
-    const res = await fetch(`${API_URL}/api/auth/twitter`);
+    const res = await fetch(`${API_URL}/api/auth/twitter`, {
+      credentials: 'include',
+    });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Failed to start Twitter sign-in');
@@ -153,7 +158,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const completeTwitterLogin = async (code: string, state: string): Promise<LoginResult> => {
     const params = new URLSearchParams({ code, state });
-    const res = await fetch(`${API_URL}/api/auth/twitter/callback?${params.toString()}`);
+    const res = await fetch(`${API_URL}/api/auth/twitter/callback?${params.toString()}`, {
+      credentials: 'include',
+    });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Twitter sign-in failed');
@@ -168,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
+      credentials: 'include',
     });
     if (!res.ok) {
       const error = await res.json();
@@ -180,6 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
+      credentials: 'include',
     });
     if (!res.ok) {
       const error = await res.json();
@@ -195,6 +204,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
+    try {
+      const p = fetch(`${API_URL}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    } catch {}
     disconnectWallet().catch(() => {});
   };
 

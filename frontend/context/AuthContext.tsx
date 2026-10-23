@@ -10,6 +10,17 @@ interface User {
   email?: string | null;
 }
 
+function isStoredUser(value: unknown): value is User {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const user = value as Record<string, unknown>;
+  return (
+    typeof user.id === 'number' && Number.isSafeInteger(user.id) && user.id > 0 &&
+    // Twitter and magic-link accounts legitimately have no wallet yet.
+    (typeof user.walletAddress === 'string' || user.walletAddress === null) &&
+    (user.email === undefined || user.email === null || typeof user.email === 'string')
+  );
+}
+
 interface LoginResult {
   user: User;
   token: string;
@@ -41,30 +52,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const syncSessionFromStorage = () => {
+      const savedToken = localStorage.getItem('authToken');
+      const savedUser = localStorage.getItem('authUser');
+      if (savedToken && savedUser) {
+        try {
+          // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring session state from localStorage on mount, see comment above
+          setToken(savedToken);
+          setUser(JSON.parse(savedUser));
+        } catch {
+          // Clear invalid stored data
+          localStorage.removeItem('authToken');
+          localStorage.removeItem('authUser');
+          setToken(null);
+          setUser(null);
+        }
+        return;
+      }
+      setToken(null);
+      setUser(null);
+    };
+
     // One-time sync FROM an external system (localStorage) on mount, which is
     // exactly what effects are for — not a derived-state anti-pattern. This
     // can't move to a `useState` lazy initializer because `localStorage`
     // isn't available during SSR; reading it outside an effect would cause a
     // hydration mismatch.
-    const savedToken = localStorage.getItem('authToken');
-    const savedUser = localStorage.getItem('authUser');
-    if (savedToken) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring session state from localStorage on mount, see comment above
-      setToken(savedToken);
-      // Migrate away from localStorage session tokens (#366)
-      localStorage.removeItem('authToken');
-    }
-    if (savedUser) {
-      try {
-        // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring session state from localStorage on mount, see comment above
-        setUser(JSON.parse(savedUser));
-      } catch {
-        // Clear invalid stored data
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('authUser');
+    syncSessionFromStorage();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'authToken' || event.key === 'authUser' || event.key === null) {
+        syncSessionFromStorage();
       }
-    }
+    };
+
+    window.addEventListener('storage', handleStorage);
     setLoading(false);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   // Every sign-in method (wallet, Twitter, magic link) ends the same way:

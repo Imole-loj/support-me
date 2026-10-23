@@ -2,6 +2,18 @@
 
 This runbook documents common production failure modes for SupportMe, including detection methods and step-by-step response procedures.
 
+## Runtime
+
+CI uses Node.js 24 from the repository's `.nvmrc`. Keep the Railway backend
+service and Vercel project on Node.js 24 as well; set the runtime in each
+provider's project/service settings and verify it in the deployment logs.
+
+## Sentry source-map uploads
+
+Vercel source-map uploads are optional. Configure `SENTRY_AUTH_TOKEN`,
+`SENTRY_ORG`, and `SENTRY_PROJECT` in the Vercel production environment to
+enable them. Builds without all three values skip source-map uploads.
+
 ## Table of Contents
 
 - [RPC Outage](#rpc-outage)

@@ -108,14 +108,17 @@ router.get(
       limit: number;
     };
 
-    const where = q
-      ? {
-          OR: [
-            { username: { contains: q, mode: "insensitive" as const } },
-            { displayName: { contains: q, mode: "insensitive" as const } },
-          ],
-        }
-      : undefined;
+    const where: Prisma.CreatorWhereInput = {
+      walletAddress: { not: null },
+      ...(q
+        ? {
+            OR: [
+              { username: { contains: q, mode: "insensitive" as const } },
+              { displayName: { contains: q, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
 
     const orderBy =
       sort === "most-supported"
@@ -202,7 +205,7 @@ router.get(
       if (type === "creators") {
         const grouped = await prisma.donation.groupBy({
           by: ["creatorId"],
-          where: { currency },
+          where: { currency, creator: { walletAddress: { not: null } } },
           _sum: { amount: true },
           _count: { _all: true },
           orderBy: { _sum: { amount: "desc" } },
@@ -315,8 +318,8 @@ router.post(
     }
 
     // Default to the wallet the user signed in with; a magic-link/OAuth user
-    // with no wallet yet gets "" (payout wallet connected later).
-    const payoutWallet: string = walletAddress || req.user.walletAddress || "";
+    // with no wallet yet gets null (payout wallet connected later).
+    const payoutWallet: string | null = walletAddress || req.user.walletAddress || null;
     if (payoutWallet) {
       assertWalletOwnership(req.user, payoutWallet, walletSignature);
       await assertWalletAvailable(payoutWallet);
@@ -387,6 +390,7 @@ router.put(
 
     // Invalidate cache when profile is updated
     creatorProfileCache.clear();
+    leaderboardCache.clear();
 
     return res.json(creator);
   })

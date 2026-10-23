@@ -96,11 +96,17 @@ router.post(
     const { walletAddress } = req.body;
 
     const nonce = randomBytes(16).toString('hex');
-    const message = `Sign in to SupportMe\n\nAddress: ${walletAddress}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
+    const challengeId = randomBytes(16).toString('hex');
+    const message = `Sign in to SupportMe\n\nAddress: ${walletAddress}\nChallenge ID: ${challengeId}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}`;
 
-    challenges.set(walletAddress, { message, expiresAt: Date.now() + CHALLENGE_TTL_MS });
+    challenges.set(walletAddress, {
+      id: challengeId,
+      walletAddress,
+      message,
+      expiresAt: Date.now() + CHALLENGE_TTL_MS,
+    });
 
-    return res.json({ message });
+    return res.json({ message, challengeId });
   })
 );
 
@@ -110,10 +116,13 @@ router.post(
   validate({ body: verifySchema }),
   rateLimit(verifyWalletLimiter, (req) => req.body.walletAddress, 'sign-in verification'),
   asyncHandler(async (req, res) => {
-    const { walletAddress, signedMessage } = req.body;
+    const { walletAddress, challengeId, signedMessage } = req.body;
 
-    const challenge = challenges.get(walletAddress);
+    const challenge = challengeId
+      ? challenges.getById(challengeId) ?? challenges.get(walletAddress)
+      : challenges.get(walletAddress);
     if (!challenge || challenge.expiresAt < Date.now()) {
+      if (challengeId) challenges.deleteById(challengeId);
       challenges.delete(walletAddress);
       throw new UnauthorizedError('Challenge expired or not found, please try again');
     }

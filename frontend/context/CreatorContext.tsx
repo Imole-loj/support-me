@@ -10,7 +10,7 @@ interface Creator {
   userId: number;
   username: string;
   displayName: string;
-  walletAddress: string;
+  walletAddress: string | null;
   avatarUrl: string | null;
   donationGoal: number | null;
   acceptsXlm: boolean;

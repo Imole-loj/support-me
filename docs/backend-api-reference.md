@@ -381,7 +381,22 @@ Get a creator by username.
 
 ### POST /api/creators/:username/create
 
-Create a creator profile after first wallet sign-in.
+Create a creator profile after sign-in (wallet, Twitter, or magic link).
+
+`walletAddress` defaults to the authenticated user's wallet, or `null` if none
+is connected. Legacy empty strings are normalized to `null`. Walletless
+profiles remain available by username, but are excluded from Discover/search
+and creator leaderboards until a payout wallet is connected.
+
+On both creation and update, `avatarUrl` must use HTTPS on
+`res.cloudinary.com/<CLOUDINARY_CLOUD_NAME>/...`, matching the backend's
+configured cloud name. Avatar writes are rejected if that setting is absent.
+Social-link updates accept only the keys `twitter`, `instagram`, `youtube`,
+`tiktok`, `github`, `linkedin`, `telegram`, and `website`, with absolute HTTP(S)
+URLs or platform handles (LinkedIn: `in/username`; website: full URL required).
+Handles are stored as expanded platform URLs. Invalid hosts/schemes or unknown
+keys return HTTP 400 with `VALIDATION_ERROR`. An empty social-links object
+clears all links.
 
 **Auth Required:** Yes
 

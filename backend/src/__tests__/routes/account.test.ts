@@ -19,6 +19,12 @@ jest.mock("../../prisma", () => ({
     withdrawal: {
       findMany: jest.fn(),
     },
+    magicLinkToken: {
+      deleteMany: jest.fn(),
+    },
+    oAuthIdentity: {
+      deleteMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   },
 }));
@@ -36,6 +42,8 @@ const mockedPrisma = prisma as unknown as {
   donation: { findMany: jest.Mock; updateMany: jest.Mock };
   subscription: { findMany: jest.Mock; updateMany: jest.Mock };
   withdrawal: { findMany: jest.Mock };
+  magicLinkToken: { deleteMany: jest.Mock };
+  oAuthIdentity: { deleteMany: jest.Mock };
   $transaction: jest.Mock;
 };
 
@@ -52,6 +60,8 @@ beforeEach(() => {
   mockedPrisma.donation.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.subscription.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.creator.update.mockResolvedValue({});
+  mockedPrisma.magicLinkToken.deleteMany.mockResolvedValue({ count: 0 });
+  mockedPrisma.oAuthIdentity.deleteMany.mockResolvedValue({ count: 0 });
   mockedPrisma.user.update.mockResolvedValue({
     id: 1,
     walletAddress: "GACCOUNTUSERADDRESS",
@@ -254,6 +264,12 @@ describe("POST /api/account/delete", () => {
     expect(mockedPrisma.user.update).toHaveBeenCalledWith({
       where: { id: 1 },
       data: { email: null, deletedAt: expect.any(Date) },
+    });
+    expect(mockedPrisma.oAuthIdentity.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 1 },
+    });
+    expect(mockedPrisma.magicLinkToken.deleteMany).toHaveBeenCalledWith({
+      where: { OR: [{ userId: 1 }, { email: "a@b.c" }] },
     });
     expect(mockedPrisma.donation.updateMany).toHaveBeenCalledWith({
       where: { senderAddress: "GACCOUNTUSERADDRESS", message: { not: null } },

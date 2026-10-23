@@ -197,6 +197,16 @@ router.post(
         where: { id: user.id },
         data: { email: null, deletedAt: new Date() },
       }),
+      prisma.oAuthIdentity.deleteMany({ where: { userId: user.id } }),
+      ...(user.email
+        ? [
+            prisma.magicLinkToken.deleteMany({
+              where: { OR: [{ userId: user.id }, { email: user.email }] },
+            }),
+          ]
+        : [
+            prisma.magicLinkToken.deleteMany({ where: { userId: user.id } }),
+          ]),
       // Memos the holder wrote on their own donations are personal content;
       // the amounts and transaction hashes stay (they're on-chain referenced).
       prisma.donation.updateMany({

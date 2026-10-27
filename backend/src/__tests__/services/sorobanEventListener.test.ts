@@ -9,11 +9,13 @@ import {
   SUBSCRIPTION_CANCELLED_EVENT,
   GOAL_UPDATED_EVENT,
   DONATION_RECORDED_EVENT,
+  SUBSCRIPTION_CHARGE_FAILED_EVENT,
   DonationEvent,
   SubscriptionCreatedEvent,
   SubscriptionCancelledEvent,
   GoalUpdatedEvent,
   DonationRecordedEvent,
+  SubscriptionChargeFailedEvent,
 } from "../../services/eventBus";
 import prisma from "../../prisma";
 import {
@@ -21,7 +23,7 @@ import {
   notifyDonationConfirmation,
   notifyGoalsReached,
 } from "../../services/donationNotifications";
-import { nativeToScVal } from "@stellar/stellar-sdk";
+import { nativeToScVal, xdr } from "@stellar/stellar-sdk";
 
 // Donation/goal notifications are fire-and-forget (setImmediate) and hit the
 // mailer + extra Prisma lookups; stub them so reconciliation tests stay
@@ -368,6 +370,90 @@ describe("SorobanEventListener event processing & reconciliation", () => {
     });
 
     eventBus.off(DONATION_RECORDED_EVENT, handler);
+  });
+
+  it("processes 'sub_failed' event, decodes the ChargeError reason, and persists it (#283)", async () => {
+    const emittedEvents: SubscriptionChargeFailedEvent[] = [];
+    const handler = (evt: SubscriptionChargeFailedEvent) => emittedEvents.push(evt);
+    eventBus.on(SUBSCRIPTION_CHARGE_FAILED_EVENT, handler);
+
+    // Mirrors the donation contract's `SubscriptionChargeFailedEvent` data
+    // shape: a map with `reason` (a ChargeError, here code 1 =
+    // InsufficientAllowance) and `subscription_id`, exactly as
+    // `env.events()` would encode it on a real network.
+    const reasonAndIdMap = xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({
+        key: nativeToScVal("reason", { type: "symbol" }),
+        val: xdr.ScVal.scvError(xdr.ScError.sceContract(1)),
+      }),
+      new xdr.ScMapEntry({
+        key: nativeToScVal("subscription_id", { type: "symbol" }),
+        val: nativeToScVal(42, { type: "u64" }),
+      }),
+    ]);
+
+    const rawEvent: RawEvent = {
+      type: "contract",
+      ledger: 1100,
+      id: "0000000000001100-00000",
+      txHash: "tx_hash_sub_failed_123",
+      topic: [toBase64Xdr("sub_failed"), toBase64Xdr("GSUPPORTER"), toBase64Xdr("GCREATOR")],
+      value: reasonAndIdMap.toXDR("base64"),
+    };
+
+    const handled = await sorobanEventListener.processEvent(rawEvent);
+
+    expect(handled).toBe(true);
+    expect(emittedEvents.length).toBe(1);
+    expect(emittedEvents[0]).toMatchObject({
+      supporter: "GSUPPORTER",
+      creator: "GCREATOR",
+      subscriptionId: 42,
+      reason: "InsufficientAllowance",
+    });
+
+    expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+      where: { onChainId: 42 },
+      data: { lastError: expect.stringContaining("InsufficientAllowance") },
+    });
+
+    eventBus.off(SUBSCRIPTION_CHARGE_FAILED_EVENT, handler);
+  });
+
+  it("processes 'sub_failed' event with an InsufficientBalance reason (#283)", async () => {
+    const emittedEvents: SubscriptionChargeFailedEvent[] = [];
+    const handler = (evt: SubscriptionChargeFailedEvent) => emittedEvents.push(evt);
+    eventBus.on(SUBSCRIPTION_CHARGE_FAILED_EVENT, handler);
+
+    const reasonAndIdMap = xdr.ScVal.scvMap([
+      new xdr.ScMapEntry({
+        key: nativeToScVal("reason", { type: "symbol" }),
+        val: xdr.ScVal.scvError(xdr.ScError.sceContract(2)),
+      }),
+      new xdr.ScMapEntry({
+        key: nativeToScVal("subscription_id", { type: "symbol" }),
+        val: nativeToScVal(7, { type: "u64" }),
+      }),
+    ]);
+
+    const rawEvent: RawEvent = {
+      type: "contract",
+      ledger: 1101,
+      id: "0000000000001101-00000",
+      txHash: "tx_hash_sub_failed_456",
+      topic: [toBase64Xdr("sub_failed"), toBase64Xdr("GSUPPORTER2"), toBase64Xdr("GCREATOR2")],
+      value: reasonAndIdMap.toXDR("base64"),
+    };
+
+    const handled = await sorobanEventListener.processEvent(rawEvent);
+
+    expect(handled).toBe(true);
+    expect(emittedEvents[0]).toMatchObject({
+      subscriptionId: 7,
+      reason: "InsufficientBalance",
+    });
+
+    eventBus.off(SUBSCRIPTION_CHARGE_FAILED_EVENT, handler);
   });
 });
 

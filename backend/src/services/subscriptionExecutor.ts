@@ -5,6 +5,8 @@ import {
   Keypair,
   TransactionBuilder,
   nativeToScVal,
+  scValToNative,
+  xdr,
 } from "@stellar/stellar-sdk";
 import prisma from "../prisma";
 import { Subscription } from "@prisma/client";
@@ -53,6 +55,98 @@ const EXECUTOR_SIDE_ERROR_PATTERNS = [
 
 export function isExecutorSideChargeError(message: string): boolean {
   return EXECUTOR_SIDE_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+/**
+ * The donation contract's `ChargeError` discriminants (#283), mirrored from
+ * `contracts/donation/src/lib.rs`'s `#[contracterror] enum ChargeError`.
+ * Soroban reports a contract revert's error code in both the simulation
+ * error string and a failed transaction's diagnostic text as
+ * `Error(Contract, #<code>)`; keep these two in sync with the Rust enum.
+ */
+export enum SubscriptionChargeErrorReason {
+  InsufficientAllowance = "InsufficientAllowance",
+  InsufficientBalance = "InsufficientBalance",
+}
+
+const CONTRACT_ERROR_CODE_TO_REASON: Record<number, SubscriptionChargeErrorReason> = {
+  1: SubscriptionChargeErrorReason.InsufficientAllowance,
+  2: SubscriptionChargeErrorReason.InsufficientBalance,
+};
+
+/**
+ * Extracts the donation contract's `ChargeError` discriminant from a
+ * Soroban simulation or transaction failure message, e.g.
+ * `"... HostError: Error(Contract, #1) ..."`. Returns `undefined` when the
+ * message doesn't carry a recognized `Error(Contract, #<code>)` marker —
+ * e.g. an executor-side or network error — so callers fall back to the
+ * existing generic-message handling instead of misreporting a reason.
+ */
+export function decodeChargeErrorReason(
+  message: string
+): SubscriptionChargeErrorReason | undefined {
+  const match = /Error\(Contract,\s*#(\d+)\)/.exec(message);
+  if (!match) return undefined;
+  const code = Number(match[1]);
+  return CONTRACT_ERROR_CODE_TO_REASON[code];
+}
+
+/**
+ * Decodes a failed transaction's `ChargeError` reason, if any, from the
+ * diagnostic events a Soroban RPC node returns alongside a FAILED
+ * `getTransaction` result. A reverted `charge_subscription` call surfaces
+ * its returned contract error as an `ScVal::Error(ScError::Contract(code))`
+ * inside one of these events' decoded value; `scValToNative` turns that
+ * into a plain `{ type: "contract", code: <number> }` object (verified
+ * against the installed stellar-sdk version), matched below the same way
+ * `decodeChargeErrorReason` matches a simulation error string.
+ */
+export function decodeChargeErrorReasonFromDiagnostics(
+  diagnosticEventsXdr: xdr.DiagnosticEvent[] | undefined
+): SubscriptionChargeErrorReason | undefined {
+  if (!diagnosticEventsXdr?.length) return undefined;
+  for (const diagnostic of diagnosticEventsXdr) {
+    try {
+      const body = diagnostic.event().body().value();
+      const native = scValToNative(body.data());
+      let text: string;
+      if (
+        native &&
+        typeof native === "object" &&
+        "code" in native &&
+        typeof (native as { code: unknown }).code === "number"
+      ) {
+        text = `Error(Contract, #${(native as { code: number }).code})`;
+      } else {
+        text = native instanceof Error ? native.message : String(native);
+      }
+      const reason = decodeChargeErrorReason(text);
+      if (reason) return reason;
+    } catch {
+      // Not every diagnostic event's data decodes to something meaningful
+      // (many are plain log/debug events); skip and keep scanning.
+      continue;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Recovers the typed reason `recordFailure` encoded into `lastError`
+ * (`"<Reason>: <message>"`), for callers (e.g. an API route or the
+ * notification copy) that want to branch on it instead of re-matching text.
+ * Returns `undefined` for a `lastError` that predates this encoding or was
+ * never decodable in the first place.
+ */
+export function parseLastErrorReason(
+  lastError: string | null | undefined
+): SubscriptionChargeErrorReason | undefined {
+  if (!lastError) return undefined;
+  const prefix = lastError.split(":", 1)[0];
+  return prefix === SubscriptionChargeErrorReason.InsufficientAllowance ||
+    prefix === SubscriptionChargeErrorReason.InsufficientBalance
+    ? (prefix as SubscriptionChargeErrorReason)
+    : undefined;
 }
 
 function errorMessage(error: unknown): string {
@@ -290,7 +384,15 @@ export class SubscriptionExecutor {
         await this.recordExecutorSideFailure(subscription, cause);
         return;
       }
-      await this.recordFailure(subscription, errorMessage(error));
+      const message = errorMessage(error);
+      // #283: distinguish InsufficientAllowance ("re-approve") from
+      // InsufficientBalance ("top up") instead of collapsing both into the
+      // same generic "failed on-chain" string, decoded from whichever of
+      // `message`/`cause` carries the contract's `Error(Contract, #N)`
+      // marker (a simulation-time rejection surfaces it directly in
+      // `message`; an on-chain revert's is appended by `confirm()` above).
+      const reason = decodeChargeErrorReason(message) ?? decodeChargeErrorReason(cause);
+      await this.recordFailure(subscription, message, reason);
       return;
     }
 
@@ -395,11 +497,20 @@ export class SubscriptionExecutor {
     });
   }
 
-  private async recordFailure(subscription: Subscription, message: string): Promise<void> {
+  private async recordFailure(
+    subscription: Subscription,
+    message: string,
+    reason?: SubscriptionChargeErrorReason
+  ): Promise<void> {
     const isPermanent = message.includes("failed on-chain") || message.includes("reverted");
     const failureCount = (subscription.failureCount ?? 0) + 1;
     const maxAttempts = isPermanent ? 3 : 24; // bounded attempts
     const shouldDeactivate = failureCount >= maxAttempts;
+    // Stored as "<Reason>: <message>" when decoded, so `lastError` stays a
+    // single human-readable string (shown as-is in notifications/UI) while
+    // still letting callers that need the typed reason extract it with
+    // `parseLastErrorReason` instead of re-matching the raw message.
+    const storedError = reason ? `${reason}: ${message}` : message;
 
     log("error", "SubscriptionExecutor charge failed", {
       subscriptionId: subscription.id,
@@ -408,6 +519,7 @@ export class SubscriptionExecutor {
       amount: subscription.amount,
       token: subscription.token,
       error: message,
+      reason,
       isPermanent,
       failureCount,
       shouldDeactivate,
@@ -448,8 +560,8 @@ export class SubscriptionExecutor {
     // maxAttempts, mark active = false so we stop retrying forever.
     await prisma.subscription.update({
       where: { id: subscription.id },
-      data: { 
-        lastError: message, 
+      data: {
+        lastError: storedError,
         failureCount,
         ...(shouldDeactivate ? { active: false } : {}),
         ...(notified ? { failureNotifiedAt: new Date() } : {}) 
@@ -533,7 +645,9 @@ export class SubscriptionExecutor {
       );
       if (result.status === "SUCCESS") return hash;
       if (result.status === "FAILED") {
-        throw new Error(`Transaction ${hash} failed on-chain`);
+        const reason = decodeChargeErrorReasonFromDiagnostics(result.diagnosticEventsXdr);
+        const suffix = reason ? ` (Error(Contract, #${reason === SubscriptionChargeErrorReason.InsufficientAllowance ? 1 : 2}))` : "";
+        throw new Error(`Transaction ${hash} failed on-chain${suffix}`);
       }
 
       const elapsed = Date.now() - startedAt;

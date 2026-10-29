@@ -19,10 +19,14 @@ const STELLAR_SIGNED_MESSAGE_PREFIX = 'Stellar Signed Message:\n';
 export function verifyWalletOwnership(
   store: ChallengeStore,
   walletAddress: string,
-  signedMessage: string
+  signedMessage: string,
+  challengeId?: string
 ): void {
-  const challenge = store.get(walletAddress);
+  const challenge = challengeId ? store.getById(challengeId) ?? store.get(walletAddress) : store.get(walletAddress);
   if (!challenge || challenge.expiresAt < Date.now()) {
+    if (challengeId) {
+      store.deleteById(challengeId);
+    }
     store.delete(walletAddress);
     throw new UnauthorizedError(
       'Wallet challenge expired or not found, request a new one from /api/auth/challenge'
@@ -46,5 +50,9 @@ export function verifyWalletOwnership(
     throw new UnauthorizedError('Invalid wallet signature');
   }
 
-  store.delete(walletAddress);
+  if (challengeId) {
+    store.deleteById(challengeId);
+  } else {
+    store.delete(walletAddress);
+  }
 }

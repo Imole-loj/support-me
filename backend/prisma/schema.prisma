@@ -86,7 +86,7 @@ model Creator {
   userId        Int            @unique
   user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   username      String         @unique
-  walletAddress String
+  walletAddress String?
   displayName   String?
   bio           String?
   avatarUrl     String?
@@ -112,7 +112,7 @@ model Creator {
   // empty array and "never configured" stay distinguishable if that
   // matters later. Denominated in whatever asset the supporter picks on
   // the donate page, same as Goal.currency — not tied to a single currency.
-  presetAmounts Float[]        @default([])
+  presetAmounts Decimal[]      @default([]) @db.Decimal(20, 7)
   // Custom public-profile theme (#227): { backgroundColor, accentColor,
   // font, layout }, validated by schemas/creators.ts's themeSchema. Null
   // means the default design, so existing creators are unaffected.
@@ -125,10 +125,11 @@ model Creator {
   goals         Goal[]
 
   @@index([walletAddress])
-  // A non-empty walletAddress is unique across creators (#276). That is a
+  // A connected walletAddress is unique across creators (#276). That is a
   // partial unique index ("walletAddress" <> '') created in migration
   // 20261018000000_creator_wallet_unique, which Prisma's schema language
-  // cannot express, so it is not declared here.
+  // cannot express, so it is not declared here. Unconnected wallets are null;
+  // a database check constraint prevents the former empty-string sentinel.
 }
 
 model Donation {
@@ -207,8 +208,8 @@ model Goal {
   // Optional longer blurb shown under the title on the public profile
   // (e.g. what the funds are for).
   description   String?
-  targetAmount  Float
-  currentAmount Float               @default(0)
+  targetAmount  Decimal             @db.Decimal(20, 7)
+  currentAmount Decimal             @default(0) @db.Decimal(20, 7)
   // Asset this goal is denominated in ("XLM", "USDC", "USDT", ...). Amounts
   // are tracked per-asset, never normalized to USD — see the reasoning in
   // services/goalService.ts.

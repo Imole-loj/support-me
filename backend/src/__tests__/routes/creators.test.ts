@@ -53,7 +53,7 @@ describe("GET /api/creators", () => {
       pagination: { page: 1, limit: 20, total: 1, totalPages: 1 },
     });
     expect(mockedPrisma.creator.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: "desc" }, where: undefined })
+      expect.objectContaining({ orderBy: { createdAt: "desc" }, where: { walletAddress: { not: null } } })
     );
   });
 
@@ -68,6 +68,7 @@ describe("GET /api/creators", () => {
       expect.objectContaining({
         orderBy: { donations: { _count: "desc" } },
         where: {
+          walletAddress: { not: null },
           OR: [
             { username: { contains: "jane", mode: "insensitive" } },
             { displayName: { contains: "jane", mode: "insensitive" } },
@@ -158,6 +159,13 @@ describe("POST /api/creators/:username/create", () => {
   const OWN_WALLET = "GA7D5LDGFABXNYEO6LZVMTWK5JWEPTODCLYZ7TG4XDZRKKXP6OS5K5JW";
   const token = generateToken(1, OWN_WALLET);
 
+  it.each(["javascript:alert(1)", "https://example.com/avatar.png"])("rejects invalid avatarUrl %s before creating a profile", async (avatarUrl) => {
+    const res = await request(app).post("/api/creators/urlcreator/create")
+      .set("Authorization", `Bearer ${token}`).send({ avatarUrl });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+  });
+
   it("rejects requests without an auth token", async () => {
     const res = await request(app).post("/api/creators/bob/create").send({});
     expect(res.status).toBe(401);
@@ -226,6 +234,20 @@ describe("POST /api/creators/:username/create", () => {
 
 describe("PUT /api/creators/:username", () => {
   const token = generateToken(1, "GUSERADDRESS");
+
+  it.each([
+    { avatarUrl: "javascript:alert(1)" },
+    { avatarUrl: "https://example.com/avatar.png" },
+    { socialLinks: { twitter: "javascript:alert(1)" } },
+    { socialLinks: { website: "data:text/html,hello" } },
+    { socialLinks: { unknown: "https://example.com" } },
+  ])("returns 400 for invalid profile URLs: %j", async (body) => {
+    const res = await request(app).put("/api/creators/bob")
+      .set("Authorization", `Bearer ${token}`).send(body);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe("VALIDATION_ERROR");
+    expect(mockedPrisma.creator.update).not.toHaveBeenCalled();
+  });
 
   it("rejects requests without an auth token", async () => {
     const res = await request(app).put("/api/creators/bob").send({ bio: "hi" });
@@ -477,7 +499,7 @@ describe("GET /api/creators/leaderboard (#16)", () => {
     expect(mockedPrisma.donation.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
         by: ["creatorId"],
-        where: { currency: "XLM" },
+        where: { currency: "XLM", creator: { walletAddress: { not: null } } },
         orderBy: { _sum: { amount: "desc" } },
       })
     );
@@ -514,7 +536,7 @@ describe("GET /api/creators/leaderboard (#16)", () => {
     expect(res.status).toBe(200);
     expect(res.body.currency).toBe("USDC");
     expect(mockedPrisma.donation.groupBy).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { currency: "USDC" } })
+      expect.objectContaining({ where: { currency: "USDC", creator: { walletAddress: { not: null } } } })
     );
   });
 
@@ -801,7 +823,7 @@ describe("Creator wallet binding (#276)", () => {
 
       expect(res.status).toBe(201);
       expect(mockedPrisma.creator.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({ walletAddress: "" }),
+        data: expect.objectContaining({ walletAddress: null }),
       });
       // No wallet to bind, so no uniqueness lookup either.
       expect(mockedPrisma.creator.findFirst).not.toHaveBeenCalled();
@@ -874,7 +896,7 @@ describe("Creator wallet binding (#276)", () => {
     });
 
     it("allows switching to the wallet the user signed in with, without a signature", async () => {
-      mockedPrisma.creator.findUnique.mockResolvedValue({ ...existing, walletAddress: "" });
+      mockedPrisma.creator.findUnique.mockResolvedValue({ ...existing, walletAddress: null });
 
       const res = await request(app)
         .put("/api/creators/bob")

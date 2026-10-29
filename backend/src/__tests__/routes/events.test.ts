@@ -8,6 +8,8 @@ import { Socket } from "net";
 import request from "supertest";
 import app from "../../app";
 import { eventBus, DONATION_EVENT, DonationEvent } from "../../services/eventBus";
+import { resetEventsConnections, setEventsConnectionLimits } from "../../routes/events";
+import { generateToken } from "../../middleware/auth";
 
 /**
  * An SSE connection never completes, so a normal `await request(app).get(...)`
@@ -15,28 +17,38 @@ import { eventBus, DONATION_EVENT, DonationEvent } from "../../services/eventBus
  * it, resolves once response headers have arrived, collects the chunks written
  * by the route, and hands back an abort handle.
  */
-function openStream() {
+function openStream(pathOrQuery = "/api/events", headersMap: Record<string, string> = {}) {
+  const url = pathOrQuery.startsWith("/") ? pathOrQuery : `/api/events${pathOrQuery}`;
   const chunks: string[] = [];
   let status = 0;
   let headers: Record<string, string> = {};
   let onHeaders: () => void;
   let socket: Socket | undefined;
+  let rawBody = "";
   const headersArrived = new Promise<void>((resolve) => {
     onHeaders = resolve;
   });
 
   // buffer(false) hands back the raw IncomingMessage so the stream can stay
   // open, which is what a real EventSource sees.
-  const pending = request(app)
-    .get("/api/events")
+  let pending = request(app)
+    .get(url)
     .set("Accept", "text/event-stream")
     .buffer(false);
+
+  for (const [k, v] of Object.entries(headersMap)) {
+    pending = pending.set(k, v);
+  }
+
   pending.on("response", (res: IncomingMessage) => {
     status = res.statusCode ?? 0;
     headers = res.headers as Record<string, string>;
     socket = res.socket;
     onHeaders();
-    res.on("data", (chunk: Buffer) => chunks.push(chunk.toString()));
+    res.on("data", (chunk: Buffer) => {
+      chunks.push(chunk.toString());
+      rawBody += chunk.toString();
+    });
     // Tearing the socket down surfaces an ECONNRESET on the raw response.
     // That is the expected consequence of closing an open stream, not a
     // failure, so it must not become an unhandled 'error' event.
@@ -56,6 +68,13 @@ function openStream() {
     get headers() {
       return headers;
     },
+    get body() {
+      try {
+        return JSON.parse(rawBody);
+      } catch {
+        return rawBody;
+      }
+    },
     close: () => {
       socket?.destroy();
       pending.abort();
@@ -68,8 +87,8 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 describe("GET /api/events", () => {
   const open: { close: () => void }[] = [];
 
-  const connect = async () => {
-    const stream = openStream();
+  const connect = async (pathOrQuery = "/api/events", headersMap: Record<string, string> = {}) => {
+    const stream = openStream(pathOrQuery, headersMap);
     open.push(stream);
     await stream.ready;
     return stream;
@@ -80,6 +99,7 @@ describe("GET /api/events", () => {
     // interval can't keep the process alive.
     for (const stream of open.splice(0)) stream.close();
     eventBus.removeAllListeners();
+    resetEventsConnections();
   });
 
   it("returns SSE headers and accepts connections", async () => {
@@ -91,7 +111,7 @@ describe("GET /api/events", () => {
     expect(stream.headers["connection"]).toContain("keep-alive");
   });
 
-  it("delivers donation events in the correct SSE format", async () => {
+  it("delivers donation events with private fields stripped on the public stream (#370)", async () => {
     const mockDonationEvent: DonationEvent = {
       donor: "GA7D5LDGFABXNYEO6LZVMTWK5JWEPTODCLYZ7TG4XDZRKKXP6OS5K5JW",
       creator: "GABC123DEF456GHI789JKL012MNO345PQR678STU901VWX234YZ",
@@ -117,9 +137,11 @@ describe("GET /api/events", () => {
     expect(eventLine).toBe("event: donation");
     expect(dataLine).toBeDefined();
 
-    // Parse the JSON data
+    // Parse the JSON data: public stream omits memo
     const parsedData = JSON.parse(dataLine?.replace("data: ", "") || "{}");
-    expect(parsedData).toEqual(mockDonationEvent);
+    const { memo: _memo, ...expectedWithoutMemo } = mockDonationEvent;
+    expect(parsedData).toEqual(expectedWithoutMemo);
+    expect(parsedData.memo).toBeUndefined();
   });
 
   it("handles multiple concurrent SSE connections", async () => {
@@ -193,14 +215,11 @@ describe("GET /api/events", () => {
     const lines = event2Data?.split("\n") || [];
     const dataLine = lines.find((l) => l.startsWith("data:"));
     const parsedData = JSON.parse(dataLine?.replace("data: ", "") || "{}");
-    expect(parsedData.memo).toBe("After reconnect");
+    expect(parsedData.memo).toBeUndefined();
     expect(parsedData.txHash).toBe(mockDonationEvent2.txHash);
   });
 
   it("keeps the connection open instead of ending it", async () => {
-    // The heartbeat interval is 30s, so this asserts the complementary
-    // property directly: nothing has been written and nothing has ended the
-    // response, which is what lets a real EventSource stay connected.
     const stream = await connect();
     await delay(50);
 
@@ -222,5 +241,83 @@ describe("GET /api/events", () => {
 
     // Listener should be removed
     expect(eventBus.listenerCount(DONATION_EVENT)).toBe(initialListenerCount);
+  });
+
+  it("filters events by ?creator= so a client subscribed to creator A never receives creator B's events (#370)", async () => {
+    const creatorA = "GCREATORAAAAAAA11111111111111111111111111111111111111111";
+    const creatorB = "GCREATORBBBBBBB22222222222222222222222222222222222222222";
+
+    const streamA = await connect(`?creator=${creatorA}`);
+
+    // Emit event for creator B
+    eventBus.emit(DONATION_EVENT, {
+      donor: "GDONOR",
+      creator: creatorB,
+      amount: "1000",
+      memo: "Memo B",
+      timestamp: Date.now(),
+      ledger: 100,
+      txHash: "tx-b",
+    });
+    await delay(50);
+
+    // Stream A should NOT have received creator B's event
+    expect(streamA.chunks.find((c) => c.includes("tx-b"))).toBeUndefined();
+
+    // Emit event for creator A
+    eventBus.emit(DONATION_EVENT, {
+      donor: "GDONOR",
+      creator: creatorA,
+      amount: "2000",
+      memo: "Memo A",
+      timestamp: Date.now(),
+      ledger: 101,
+      txHash: "tx-a",
+    });
+    await delay(50);
+
+    // Stream A SHOULD have received creator A's event
+    const eventA = streamA.chunks.find((c) => c.includes("tx-a"));
+    expect(eventA).toBeDefined();
+  });
+
+  it("includes private fields (memo) when authenticated as the creator (#370)", async () => {
+    const creatorWallet = "GCREATORAUTH111111111111111111111111111111111111111111";
+    const token = generateToken(42, creatorWallet);
+
+    const stream = await connect(`?creator=${creatorWallet}&token=${token}`);
+
+    eventBus.emit(DONATION_EVENT, {
+      donor: "GDONOR",
+      creator: creatorWallet,
+      amount: "5000",
+      memo: "Secret memo for creator",
+      timestamp: Date.now(),
+      ledger: 200,
+      txHash: "tx-auth",
+    });
+    await delay(50);
+
+    const eventData = stream.chunks.find((c) => c.includes("tx-auth"));
+    expect(eventData).toBeDefined();
+    const lines = eventData?.split("\n") || [];
+    const dataLine = lines.find((l) => l.startsWith("data:"));
+    const parsed = JSON.parse(dataLine?.replace("data: ", "") || "{}");
+    expect(parsed.memo).toBe("Secret memo for creator");
+  });
+
+  it("refuses connections beyond the connection cap with 429 (#370)", async () => {
+    setEventsConnectionLimits({ ip: 2 });
+
+    const conn1 = await connect();
+    expect(conn1.status).toBe(200);
+
+    const conn2 = await connect();
+    expect(conn2.status).toBe(200);
+
+    const conn3 = await connect();
+    expect(conn3.status).toBe(429);
+    expect(conn3.headers["retry-after"]).toBe("30");
+    expect(conn3.body.code).toBe("TOO_MANY_REQUESTS");
   });
 });

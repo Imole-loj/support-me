@@ -30,9 +30,13 @@
     "testnetBadge": "Testnet",
     "testnetTooltip": "This app runs on Stellar Testnet — no real funds are used.",
     "connectWallet": "Connect Wallet",
+    "payoutUnavailable": "This creator is not accepting tips yet because they have not connected a payout wallet. Please check back later.",
     "connecting": "Connecting…",
     "walletConnected": "Wallet connected!",
     "walletLabel": "Wallet: {address}…",
+    "wrongNetworkTitle": "Your wallet is on the wrong network",
+    "wrongNetworkMessage": "Switch it to the Stellar Testnet to continue.",
+    "wrongNetworkRecheck": "Check again",
     "installWalletTitle": "Install a Stellar wallet to continue",
     "assetLegend": "Asset",
     "amountLabel": "Amount ({asset})",
@@ -44,6 +48,7 @@
     "messageLabel": "Message (Optional)",
     "messagePlaceholder": "Thanks for your work!",
     "characterCount": "{count}/{max}",
+    "recurringMessageHint": "Messages apply to one-time tips only.",
     "makeRecurring": "Make it recurring",
     "intervalWeekly": "Weekly",
     "intervalMonthly": "Monthly",
@@ -81,6 +86,6 @@
   },
   "languageSwitcher": {
     "label": "Language",
-    "scopeNote": "Translates this profile and the donation form only. Other pages stay in English."
+    "scopeNote": "Translates this profile and the donation form. Other pages are currently in English."
   }
 }

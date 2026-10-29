@@ -11,7 +11,7 @@ interface Creator {
   userId: number;
   username: string;
   displayName: string;
-  walletAddress: string;
+  walletAddress: string | null;
   avatarUrl: string | null;
   donationGoal: number | null;
   acceptsXlm: boolean;
@@ -41,20 +41,17 @@ export function CreatorProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     const fetchCreator = async () => {
-      if (!user || !token) {
-        // Signed out (including signed out by a 401, #246): drop any stale
-        // profile so no page keeps rendering signed-in data for a session
-        // that no longer exists.
-        if (active) {
-          setCreator(null);
-          setLoading(false);
-        }
+      if (!user) {
+        if (active) setLoading(false);
         return;
       }
       try {
-        // authFetch signs the user out and throws SessionExpiredError on a
-        // 401 (#246), so the catch below never masks an expired token.
-        const res = await authFetch(`${API_URL}/api/creators/me`);
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`${API_URL}/api/creators/me`, {
+          credentials: 'include',
+          headers,
+        });
         if (res.status === 404) {
           if (active) setCreator(null);
           return;

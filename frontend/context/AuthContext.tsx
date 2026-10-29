@@ -11,6 +11,17 @@ interface User {
   email?: string | null;
 }
 
+function isStoredUser(value: unknown): value is User {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const user = value as Record<string, unknown>;
+  return (
+    typeof user.id === 'number' && Number.isSafeInteger(user.id) && user.id > 0 &&
+    // Twitter and magic-link accounts legitimately have no wallet yet.
+    (typeof user.walletAddress === 'string' || user.walletAddress === null) &&
+    (user.email === undefined || user.email === null || typeof user.email === 'string')
+  );
+}
+
 interface LoginResult {
   user: User;
   token: string;
@@ -42,21 +53,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // One-time sync FROM an external system (localStorage) on mount, which is
-    // exactly what effects are for — not a derived-state anti-pattern. This
-    // can't move to a `useState` lazy initializer because `localStorage`
-    // isn't available during SSR; reading it outside an effect would cause a
-    // hydration mismatch.
-    const savedToken = localStorage.getItem('authToken');
-    const savedUser = localStorage.getItem('authUser');
-    if (savedToken && savedUser) {
-      if (isTokenExpired(savedToken)) {
-        // The stored JWT already expired (#246): drop it instead of restoring
-        // a session whose very first API call would 401, so a reload lands on
-        // the signed-out state rather than a page of failing requests.
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('authUser');
-      } else {
+    const syncSessionFromStorage = () => {
+      const savedToken = localStorage.getItem('authToken');
+      const savedUser = localStorage.getItem('authUser');
+      if (savedToken && savedUser) {
         try {
           // eslint-disable-next-line react-hooks/set-state-in-effect -- restoring session state from localStorage on mount, see comment above
           setToken(savedToken);
@@ -65,19 +65,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Clear invalid stored data
           localStorage.removeItem('authToken');
           localStorage.removeItem('authUser');
+          setToken(null);
+          setUser(null);
         }
+        return;
       }
-    }
+      setToken(null);
+      setUser(null);
+    };
+
+    // One-time sync FROM an external system (localStorage) on mount, which is
+    // exactly what effects are for — not a derived-state anti-pattern. This
+    // can't move to a `useState` lazy initializer because `localStorage`
+    // isn't available during SSR; reading it outside an effect would cause a
+    // hydration mismatch.
+    syncSessionFromStorage();
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'authToken' || event.key === 'authUser' || event.key === null) {
+        syncSessionFromStorage();
+      }
+    };
+
+    window.addEventListener('storage', handleStorage);
     setLoading(false);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   // Every sign-in method (wallet, Twitter, magic link) ends the same way:
   // the backend returns the same LoginResult shape, so persisting the
   // session is identical regardless of how the user proved their identity.
+  // Session tokens are held in httpOnly cookies (#366) and not in localStorage.
   const persistSession = (data: LoginResult): LoginResult => {
     setToken(data.token);
     setUser(data.user);
-    localStorage.setItem('authToken', data.token);
+    localStorage.removeItem('authToken');
     localStorage.setItem('authUser', JSON.stringify(data.user));
     return data;
   };
@@ -95,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ walletAddress: address }),
+      credentials: 'include',
     });
     if (!challengeRes.ok) {
       const error = await challengeRes.json();
@@ -108,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ walletAddress: address, signedMessage }),
+      credentials: 'include',
     });
     if (!verifyRes.ok) {
       const error = await verifyRes.json();
@@ -119,7 +146,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const getTwitterRedirectUrl = async (): Promise<string> => {
-    const res = await fetch(`${API_URL}/api/auth/twitter`);
+    const res = await fetch(`${API_URL}/api/auth/twitter`, {
+      credentials: 'include',
+    });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Failed to start Twitter sign-in');
@@ -130,7 +159,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const completeTwitterLogin = async (code: string, state: string): Promise<LoginResult> => {
     const params = new URLSearchParams({ code, state });
-    const res = await fetch(`${API_URL}/api/auth/twitter/callback?${params.toString()}`);
+    const res = await fetch(`${API_URL}/api/auth/twitter/callback?${params.toString()}`, {
+      credentials: 'include',
+    });
     if (!res.ok) {
       const error = await res.json();
       throw new Error(error.error || 'Twitter sign-in failed');
@@ -145,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
+      credentials: 'include',
     });
     if (!res.ok) {
       const error = await res.json();
@@ -157,6 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
+      credentials: 'include',
     });
     if (!res.ok) {
       const error = await res.json();
@@ -174,6 +207,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     localStorage.removeItem('authToken');
     localStorage.removeItem('authUser');
+    try {
+      const p = fetch(`${API_URL}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    } catch {}
     disconnectWallet().catch(() => {});
   }, []);
 

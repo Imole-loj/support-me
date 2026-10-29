@@ -34,6 +34,11 @@ import {
 } from "../../services/subscriptionNotifications";
 import { applyDonationToGoals } from "../../services/goalService";
 import { notifyGoalsReached } from "../../services/donationNotifications";
+import {
+  decodeChargeErrorReason,
+  parseLastErrorReason,
+  SubscriptionChargeErrorReason,
+} from "../../services/subscriptionExecutor";
 
 // `charge` and `submitCharge` are private; this type exposes exactly those
 // two members for the tests below to call directly, instead of casting the
@@ -174,5 +179,73 @@ describe("SubscriptionExecutor executor-side failures (#279)", () => {
     expect(mockedPrisma.subscription.update.mock.calls[0][0].data).toEqual(
       expect.objectContaining({ failureCount: 1 })
     );
+  });
+
+  it("stores a typed InsufficientAllowance reason when the simulation error names it (#283)", async () => {
+    const executor = new SubscriptionExecutor() as any;
+    executor.submitCharge = jest
+      .fn()
+      .mockRejectedValue(new Error("HostError: Error(Contract, #1)"));
+
+    await executor.charge(subscription);
+
+    expect(mockedPrisma.subscription.update.mock.calls[0][0].data.lastError).toBe(
+      "InsufficientAllowance: HostError: Error(Contract, #1)"
+    );
+  });
+
+  it("stores a typed InsufficientBalance reason when the simulation error names it (#283)", async () => {
+    const executor = new SubscriptionExecutor() as any;
+    executor.submitCharge = jest
+      .fn()
+      .mockRejectedValue(new Error("HostError: Error(Contract, #2)"));
+
+    await executor.charge(subscription);
+
+    expect(mockedPrisma.subscription.update.mock.calls[0][0].data.lastError).toBe(
+      "InsufficientBalance: HostError: Error(Contract, #2)"
+    );
+  });
+});
+
+describe("decodeChargeErrorReason (#283)", () => {
+  it("maps contract error code #1 to InsufficientAllowance", () => {
+    expect(decodeChargeErrorReason("Error(Contract, #1)")).toBe(
+      SubscriptionChargeErrorReason.InsufficientAllowance
+    );
+  });
+
+  it("maps contract error code #2 to InsufficientBalance", () => {
+    expect(decodeChargeErrorReason("Error(Contract, #2)")).toBe(
+      SubscriptionChargeErrorReason.InsufficientBalance
+    );
+  });
+
+  it("returns undefined for an unrelated error message", () => {
+    expect(decodeChargeErrorReason("Account not found: G...")).toBeUndefined();
+  });
+
+  it("returns undefined for an unrecognized contract error code", () => {
+    expect(decodeChargeErrorReason("Error(Contract, #99)")).toBeUndefined();
+  });
+});
+
+describe("parseLastErrorReason (#283)", () => {
+  it("recovers the reason encoded by recordFailure", () => {
+    expect(
+      parseLastErrorReason("InsufficientAllowance: Transaction abc failed on-chain")
+    ).toBe(SubscriptionChargeErrorReason.InsufficientAllowance);
+    expect(
+      parseLastErrorReason("InsufficientBalance: Transaction abc failed on-chain")
+    ).toBe(SubscriptionChargeErrorReason.InsufficientBalance);
+  });
+
+  it("returns undefined for a plain, undecorated lastError", () => {
+    expect(parseLastErrorReason("Transaction abc failed on-chain")).toBeUndefined();
+  });
+
+  it("returns undefined for null/undefined", () => {
+    expect(parseLastErrorReason(null)).toBeUndefined();
+    expect(parseLastErrorReason(undefined)).toBeUndefined();
   });
 });

@@ -42,7 +42,7 @@ interface Creator {
   id: number;
   username: string;
   displayName: string | null;
-  walletAddress: string;
+  walletAddress: string | null;
   bio: string | null;
   avatarUrl: string | null;
   socialLinks: Record<string, string> | null;
@@ -371,6 +371,20 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
     };
   }, [userAddress, assetCode, loadAssetBalance]);
 
+  // Re-reads the wallet's current network. Returns false (and raises the
+  // blocking notice) when it provably isn't Testnet; true otherwise —
+  // including when the wallet doesn't expose its network at all, in which
+  // case there is nothing to block on.
+  const ensureTestnetWallet = async (): Promise<boolean> => {
+    const onTestnet = await isWalletOnTestnet();
+    if (onTestnet === false) {
+      setWrongNetwork(true);
+      return false;
+    }
+    setWrongNetwork(false);
+    return true;
+  };
+
   const handleConnectWallet = async () => {
     setConnecting(true);
     try {
@@ -379,6 +393,7 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
       // address is null when the user closed the wallet picker without
       // connecting (see lib/wallet.ts) -- nothing to load or celebrate yet.
       if (!address) return;
+      if (!(await ensureTestnetWallet())) return;
       setBalance(await loadAssetBalance(address, assetCode));
       notify.success(t('walletConnected'));
     } catch (err) {
@@ -445,6 +460,9 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
       notify.error(t('cannotSendDonationTitle'), t('cannotSendDonationMessage'));
       return;
     }
+    // The user may have switched the wallet to Mainnet since connecting —
+    // check again before any transaction is built or signed.
+    if (!(await ensureTestnetWallet())) return;
 
     setSending(true);
     setTxStatus('building');
@@ -541,6 +559,11 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
         setUserAddress(address);
       }
       if (!address) {
+        setSending(false);
+        return;
+      }
+      // The wallet connected just above may itself be on the wrong network.
+      if (!(await ensureTestnetWallet())) {
         setSending(false);
         return;
       }
@@ -840,7 +863,11 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
             </span>
           </div>
 
-          {sending ? (
+          {!creator.walletAddress ? (
+            <p role="status" className="text-sm text-muted font-medium">
+              {t('payoutUnavailable')}
+            </p>
+          ) : sending ? (
             <div className="py-2">
               <TipJarLoader fullScreen={false} />
               {(subscribeStep || (txStatus && statusLabels[txStatus])) && (
@@ -848,6 +875,18 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                   {subscribeStep ?? statusLabels[txStatus as string]}
                 </p>
               )}
+            </div>
+          ) : wrongNetwork ? (
+            <div role="alert" className="card-brutal bg-brand-pink p-4 space-y-3">
+              <h3 className="font-extrabold text-ink">{t('wrongNetworkTitle')}</h3>
+              <p className="text-sm text-ink font-medium">{t('wrongNetworkMessage')}</p>
+              <button
+                type="button"
+                onClick={handleRecheckNetwork}
+                className="btn-brutal btn-brutal-primary w-full min-h-[48px]"
+              >
+                {t('wrongNetworkRecheck')}
+              </button>
             </div>
           ) : !userAddress ? (
             <button
@@ -1019,7 +1058,8 @@ function CreatorProfileView({ username, locale, onLocaleChange }: CreatorProfile
                         value={donationMessage}
                         onChange={(e) => setDonationMessage(e.target.value)}
                         placeholder={t('messagePlaceholder')}
-                        className="input-brutal text-sm"
+                        disabled={recurring}
+                        className="input-brutal text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                         rows={3}
                       />
                       <p className="text-xs text-muted mt-1 font-medium">

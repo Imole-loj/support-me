@@ -9,6 +9,7 @@ document under `docs/`, add a link to it here.
   contracts, and local setup for the backend and frontend.
 - [Contributing guide](../CONTRIBUTING.md): workflow, repository layout and
   development setup.
+- [Adding translations](i18n.md): how to add interface strings and languages.
 - [Testing](../TESTING.md): what CI runs and how to run each test suite
   locally.
 - [Testnet troubleshooting](testnet-troubleshooting.md): every wallet,

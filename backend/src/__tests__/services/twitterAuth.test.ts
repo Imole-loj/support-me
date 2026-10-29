@@ -121,8 +121,6 @@ describe("completeTwitterAuth (#14)", () => {
         provider: "twitter",
         providerAccountId: "twitter-id-1",
         userId: 42,
-        accessToken: "at-1",
-        refreshToken: "rt-1",
       },
     });
     expect(session.user).toEqual({ id: 42, walletAddress: null });
@@ -130,7 +128,7 @@ describe("completeTwitterAuth (#14)", () => {
     expect(typeof session.token).toBe("string");
   });
 
-  it("matches a returning user by (provider, providerAccountId) and refreshes their stored tokens", async () => {
+  it("matches a returning user by (provider, providerAccountId) without storing tokens (#367)", async () => {
     const authorizeUrl = new URL(startTwitterAuth());
     const state = authorizeUrl.searchParams.get("state")!;
 
@@ -151,11 +149,29 @@ describe("completeTwitterAuth (#14)", () => {
     expect(mockedPrisma.user.create).not.toHaveBeenCalled();
     expect(mockedPrisma.oAuthIdentity.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { accessToken: "new-at", refreshToken: undefined },
+      data: { updatedAt: expect.any(Date) },
     });
     expect(session.user).toEqual({ id: 7, walletAddress: "GABC" });
     expect(session.hasProfile).toBe(true);
     expect(session.username).toBe("bob");
+  });
+
+  it("never persists accessToken or refreshToken in OAuthIdentity rows (#367)", async () => {
+    const authorizeUrl = new URL(startTwitterAuth());
+    const state = authorizeUrl.searchParams.get("state")!;
+
+    mockedExchange.mockResolvedValue({ accessToken: "secret-token", refreshToken: "secret-refresh" });
+    mockedFetchProfile.mockResolvedValue({ id: "safe-twitter-id", username: "safe", name: "Safe" });
+    mockedPrisma.oAuthIdentity.findUnique.mockResolvedValue(null);
+    mockedPrisma.user.create.mockResolvedValue({ id: 99, walletAddress: null, email: null });
+    mockedPrisma.oAuthIdentity.create.mockResolvedValue({});
+    mockedPrisma.creator.findUnique.mockResolvedValue(null);
+
+    await completeTwitterAuth("code", state);
+
+    const createCall = mockedPrisma.oAuthIdentity.create.mock.calls[0][0];
+    expect(createCall.data).not.toHaveProperty("accessToken");
+    expect(createCall.data).not.toHaveProperty("refreshToken");
   });
 
   it("refuses to sign in a returning user whose account has been soft-deleted (#270)", async () => {

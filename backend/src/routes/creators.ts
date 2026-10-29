@@ -32,6 +32,15 @@ const router = Router();
 // Exported so tests can reset it between cases.
 export const creatorProfileCache = new TtlCache<Creator>(5 * 60 * 1000);
 
+export function formatCreator<T extends { presetAmounts?: any }>(creator: T): T {
+  if (!creator) return creator;
+  if (!Array.isArray(creator.presetAmounts)) return creator;
+  return {
+    ...creator,
+    presetAmounts: creator.presetAmounts.map((p: any) => toAmount(p)),
+  };
+}
+
 interface LeaderboardEntry {
   rank: number;
   total: number;
@@ -108,14 +117,17 @@ router.get(
       limit: number;
     };
 
-    const where = q
-      ? {
-          OR: [
-            { username: { contains: q, mode: "insensitive" as const } },
-            { displayName: { contains: q, mode: "insensitive" as const } },
-          ],
-        }
-      : undefined;
+    const where: Prisma.CreatorWhereInput = {
+      walletAddress: { not: null },
+      ...(q
+        ? {
+            OR: [
+              { username: { contains: q, mode: "insensitive" as const } },
+              { displayName: { contains: q, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
 
     const orderBy =
       sort === "most-supported"
@@ -136,7 +148,7 @@ router.get(
     ]);
 
     return res.json({
-      items: creators,
+      items: creators.map(formatCreator),
       pagination: {
         page,
         limit,
@@ -160,7 +172,7 @@ router.get(
       throw new NotFoundError("Creator not found");
     }
 
-    return res.json(creator);
+    return res.json(formatCreator(creator));
   })
 );
 
@@ -202,7 +214,7 @@ router.get(
       if (type === "creators") {
         const grouped = await prisma.donation.groupBy({
           by: ["creatorId"],
-          where: { currency },
+          where: { currency, creator: { walletAddress: { not: null } } },
           _sum: { amount: true },
           _count: { _all: true },
           orderBy: { _sum: { amount: "desc" } },
@@ -271,7 +283,7 @@ router.get(
         return profile;
       });
 
-      return res.json(creator);
+      return res.json(formatCreator(creator));
     } catch (error) {
       // If cache fails, fall back to direct DB read
       if (error instanceof NotFoundError) {
@@ -285,7 +297,7 @@ router.get(
         throw new NotFoundError("Creator not found");
       }
 
-      return res.json(creator);
+      return res.json(formatCreator(creator));
     }
   })
 );
@@ -315,8 +327,8 @@ router.post(
     }
 
     // Default to the wallet the user signed in with; a magic-link/OAuth user
-    // with no wallet yet gets "" (payout wallet connected later).
-    const payoutWallet: string = walletAddress || req.user.walletAddress || "";
+    // with no wallet yet gets null (payout wallet connected later).
+    const payoutWallet: string | null = walletAddress || req.user.walletAddress || null;
     if (payoutWallet) {
       assertWalletOwnership(req.user, payoutWallet, walletSignature);
       await assertWalletAvailable(payoutWallet);
@@ -340,7 +352,7 @@ router.post(
       throw err;
     }
 
-    return res.status(201).json(creator);
+    return res.status(201).json(formatCreator(creator));
   })
 );
 
@@ -387,8 +399,9 @@ router.put(
 
     // Invalidate cache when profile is updated
     creatorProfileCache.clear();
+    leaderboardCache.clear();
 
-    return res.json(creator);
+    return res.json(formatCreator(creator));
   })
 );
 
@@ -420,7 +433,7 @@ router.patch(
 
     creatorProfileCache.clear();
 
-    return res.json(creator);
+    return res.json(formatCreator(creator));
   })
 );
 

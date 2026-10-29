@@ -30,8 +30,8 @@
 //! idle periods. See the `common` crate docs for the TTL constants.
 
 use common::{
-    extend_instance_ttl, extend_subscription_ttl, AdminAction, AdminProposal, CreatorProfile,
-    DonationRecord, Subscription, ADMIN_PROPOSAL_TTL_SECONDS,
+    extend_instance_ttl, extend_persistent_ttl, extend_subscription_ttl, AdminAction,
+    AdminProposal, CreatorProfile, DonationRecord, Subscription, ADMIN_PROPOSAL_TTL_SECONDS,
 };
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, symbol_short, token, Address, Env,
@@ -56,6 +56,13 @@ const EXECUTOR_KEY: Symbol = symbol_short!("executor");
 const ALLOWED_TOKEN_KEY: Symbol = symbol_short!("allowed");
 const MIN_DONATION_KEY: Symbol = symbol_short!("min_don");
 const MAX_DONATION_KEY: Symbol = symbol_short!("max_don");
+/// Persistent key, keyed further by `(supporter, token)`, tracking the sum of
+/// `amount` across that supporter's currently-active subscriptions in that
+/// token. See `cancel_subscription` for why this is needed: SAC allowances
+/// are keyed by `(owner, spender)`, not per subscription, so cancelling one
+/// subscription must only reduce the allowance by *that* subscription's
+/// committed amount, never zero out a shared allowance still backing others.
+const COMMITTED_KEY: Symbol = symbol_short!("commit");
 pub const MAX_MEMO_LENGTH: u32 = 140;
 
 /// Emitted whenever a donation is settled on-chain.
@@ -200,6 +207,53 @@ pub struct SubscriptionChargeFailedEvent {
     pub reason: ChargeError,
 }
 
+/// Emitted whenever the token allowlist changes (#284), whether through a
+/// multisig-approved `AdminAction` or the single-admin legacy shortcut.
+#[contractevent(topics = ["allow_tok"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllowedTokenChangedEvent {
+    #[topic]
+    pub token: Address,
+    pub allowed: bool,
+}
+
+/// Emitted whenever the minimum donation guardrail changes (#284).
+#[contractevent(topics = ["min_don"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinDonationChangedEvent {
+    pub old_min: i128,
+    pub new_min: i128,
+}
+
+/// Emitted whenever the maximum donation guardrail changes (#284).
+#[contractevent(topics = ["max_don"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxDonationChangedEvent {
+    pub old_max: i128,
+    pub new_max: i128,
+}
+
+/// Emitted whenever the contract is paused or unpaused (#284). Covers both
+/// the instant `emergency_pause` shortcut and the multisig `Pause`/`Unpause`
+/// `AdminAction`s.
+#[contractevent(topics = ["pause_chg"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PauseChangedEvent {
+    pub paused: bool,
+}
+
+/// Emitted whenever the authorized subscription-charge executor changes
+/// (#284), whether via the multisig `SetExecutor` action or the single-admin
+/// legacy `set_executor` shortcut. `old_executor` is `None` the first time
+/// an executor is ever set.
+#[contractevent(topics = ["exec_chg"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutorChangedEvent {
+    pub old_executor: Option<Address>,
+    #[topic]
+    pub new_executor: Address,
+}
+
 #[contract]
 pub struct DonationContract;
 
@@ -312,6 +366,7 @@ impl DonationContract {
         }
         env.storage().instance().set(&PAUSED_KEY, &true);
         extend_instance_ttl(&env);
+        PauseChangedEvent { paused: true }.publish(&env);
     }
 
     /// Proposes a multi-signature administrative action.
@@ -511,7 +566,13 @@ impl DonationContract {
 
         match proposal.action.clone() {
             AdminAction::SetExecutor(target) => {
+                let old: Option<Address> = env.storage().instance().get(&EXECUTOR_KEY);
                 env.storage().instance().set(&EXECUTOR_KEY, &target);
+                ExecutorChangedEvent {
+                    old_executor: old,
+                    new_executor: target,
+                }
+                .publish(&env);
             }
             AdminAction::SetDonationContract(target) => {
                 env.storage().instance().set(&REGISTRY_KEY, &target);
@@ -540,6 +601,21 @@ impl DonationContract {
                     soroban_sdk::panic_with_error!(&env, DonationError::ThresholdExceedsAdmins);
                 }
                 env.storage().instance().set(&ADMINS_KEY, &new_admins);
+
+                // #284: a removed primary admin must lose every privilege
+                // the legacy single-admin shortcuts (`set_executor`, token
+                // allowlist, donation limits) gate on `ADMIN_KEY`, not just
+                // its seat in `ADMINS_KEY`. Reassign `ADMIN_KEY` to the new
+                // `admins.get(0)` exactly like `__constructor` picks the
+                // initial primary admin, so those shortcuts keep working for
+                // *some* current admin on a 1-of-1 deployment instead of
+                // being permanently stuck pointing at a removed address.
+                let current_primary: Address = env.storage().instance().get(&ADMIN_KEY).unwrap();
+                if current_primary == old_admin {
+                    env.storage()
+                        .instance()
+                        .set(&ADMIN_KEY, &new_admins.get(0).unwrap());
+                }
             }
             AdminAction::SetThreshold(new_threshold) => {
                 let admins: Vec<Address> = env.storage().instance().get(&ADMINS_KEY).unwrap();
@@ -550,9 +626,23 @@ impl DonationContract {
             }
             AdminAction::Pause => {
                 env.storage().instance().set(&PAUSED_KEY, &true);
+                PauseChangedEvent { paused: true }.publish(&env);
             }
             AdminAction::Unpause => {
                 env.storage().instance().set(&PAUSED_KEY, &false);
+                PauseChangedEvent { paused: false }.publish(&env);
+            }
+            AdminAction::AddAllowedToken(token) => {
+                Self::set_allowed_token(&env, &token, true);
+            }
+            AdminAction::RemoveAllowedToken(token) => {
+                Self::set_allowed_token(&env, &token, false);
+            }
+            AdminAction::SetMinDonation(min_amount) => {
+                Self::apply_min_donation(&env, min_amount);
+            }
+            AdminAction::SetMaxDonation(max_amount) => {
+                Self::apply_max_donation(&env, max_amount);
             }
         }
 
@@ -577,8 +667,14 @@ impl DonationContract {
                 None => soroban_sdk::panic_with_error!(&env, DonationError::NotInitialized),
             };
             admin.require_auth();
+            let old: Option<Address> = env.storage().instance().get(&EXECUTOR_KEY);
             env.storage().instance().set(&EXECUTOR_KEY, &executor);
             extend_instance_ttl(&env);
+            ExecutorChangedEvent {
+                old_executor: old,
+                new_executor: executor,
+            }
+            .publish(&env);
         } else {
             soroban_sdk::panic_with_error!(&env, DonationError::MultiSigRequired);
         }
@@ -601,27 +697,67 @@ impl DonationContract {
         env.invoke_contract(&registry, &Symbol::new(&env, "get_creator"), args)
     }
 
-    /// Admin-gated: adds a token address to the allowlist.
-    pub fn add_allowed_token(env: Env, token: Address) {
-        let admin: Address = match env.storage().instance().get(&ADMIN_KEY) {
-            Some(a) => a,
-            None => soroban_sdk::panic_with_error!(&env, DonationError::NotInitialized),
-        };
-        admin.require_auth();
-        env.storage()
+    /// Requires `require_auth` from the single primary admin, and panics if
+    /// this deployment actually runs a multisig (`threshold > 1`). See
+    /// `set_executor` for the pattern this mirrors: on a 1-of-1 deployment
+    /// there is no multisig to bypass, so the legacy single-call setters
+    /// below stay convenient; once `threshold > 1`, every one of them must
+    /// go through `propose_admin_action` / `approve_admin_action` /
+    /// `execute_admin_action` instead, or a single compromised or
+    /// disagreeing key could unilaterally allowlist an arbitrary token or
+    /// choke donations by setting `max_donation` to 1 stroop (#284).
+    fn require_single_admin_mode(env: &Env, caller_panic_message: &str) -> Address {
+        let threshold: u32 = env.storage().instance().get(&THRESHOLD_KEY).unwrap_or(1);
+        assert!(threshold == 1, "{}", caller_panic_message);
+        let admin: Address = env
+            .storage()
             .instance()
-            .set(&(ALLOWED_TOKEN_KEY, token), &true);
+            .get(&ADMIN_KEY)
+            .expect("donation contract not initialized");
+        admin.require_auth();
+        admin
     }
 
-    /// Admin-gated: removes a token address from the allowlist.
+    /// Admin-gated: adds a token address to the allowlist. Direct calls only
+    /// work on a single-admin (threshold == 1) deployment — see
+    /// `require_single_admin_mode`; otherwise propose `AddAllowedToken`.
+    pub fn add_allowed_token(env: Env, token: Address) {
+        Self::require_single_admin_mode(
+            &env,
+            "multi-sig required: use propose_admin_action to change the token allowlist",
+        );
+        Self::set_allowed_token(&env, &token, true);
+    }
+
+    /// Admin-gated: removes a token address from the allowlist. Direct calls
+    /// only work on a single-admin (threshold == 1) deployment — see
+    /// `require_single_admin_mode`; otherwise propose `RemoveAllowedToken`.
     pub fn remove_allowed_token(env: Env, token: Address) {
-        let admin: Address = match env.storage().instance().get(&ADMIN_KEY) {
-            Some(a) => a,
-            None => soroban_sdk::panic_with_error!(&env, DonationError::NotInitialized),
-        };
-        admin.require_auth();
-        env.storage().instance().remove(&(ALLOWED_TOKEN_KEY, token));
-        extend_instance_ttl(&env);
+        Self::require_single_admin_mode(
+            &env,
+            "multi-sig required: use propose_admin_action to change the token allowlist",
+        );
+        Self::set_allowed_token(&env, &token, false);
+    }
+
+    /// Shared allowlist mutation for both the legacy direct setters and the
+    /// `AddAllowedToken`/`RemoveAllowedToken` `AdminAction` executor arms, so
+    /// the storage write, TTL extension, and event are identical regardless
+    /// of which path reached it.
+    fn set_allowed_token(env: &Env, token: &Address, allowed: bool) {
+        if allowed {
+            env.storage()
+                .instance()
+                .set(&(ALLOWED_TOKEN_KEY, token), &true);
+        } else {
+            env.storage().instance().remove(&(ALLOWED_TOKEN_KEY, token));
+        }
+        extend_instance_ttl(env);
+        AllowedTokenChangedEvent {
+            token: token.clone(),
+            allowed,
+        }
+        .publish(env);
     }
 
     /// Checks if a token is currently in the allowlist.
@@ -629,18 +765,16 @@ impl DonationContract {
         env.storage().instance().has(&(ALLOWED_TOKEN_KEY, token))
     }
 
-    /// Admin-gated: sets the minimum donation amount guardrail (0 to disable).
+    /// Admin-gated: sets the minimum donation amount guardrail (0 to
+    /// disable). Direct calls only work on a single-admin (threshold == 1)
+    /// deployment — see `require_single_admin_mode`; otherwise propose
+    /// `SetMinDonation`.
     pub fn set_min_donation(env: Env, min_amount: i128) {
-        if min_amount < 0 {
-            soroban_sdk::panic_with_error!(&env, DonationError::InvalidAmount);
-        }
-        let admin: Address = match env.storage().instance().get(&ADMIN_KEY) {
-            Some(a) => a,
-            None => soroban_sdk::panic_with_error!(&env, DonationError::NotInitialized),
-        };
-        admin.require_auth();
-        env.storage().instance().set(&MIN_DONATION_KEY, &min_amount);
-        extend_instance_ttl(&env);
+        Self::require_single_admin_mode(
+            &env,
+            "multi-sig required: use propose_admin_action to change the minimum donation",
+        );
+        Self::apply_min_donation(&env, min_amount);
     }
 
     /// Returns the currently configured minimum donation amount (0 if unconstrained).
@@ -648,23 +782,64 @@ impl DonationContract {
         env.storage().instance().get(&MIN_DONATION_KEY).unwrap_or(0)
     }
 
-    /// Admin-gated: sets the sanity-check maximum donation amount guardrail (0 to disable).
+    /// Admin-gated: sets the sanity-check maximum donation amount guardrail
+    /// (0 to disable). Direct calls only work on a single-admin
+    /// (threshold == 1) deployment — see `require_single_admin_mode`;
+    /// otherwise propose `SetMaxDonation`.
     pub fn set_max_donation(env: Env, max_amount: i128) {
-        if max_amount < 0 {
-            soroban_sdk::panic_with_error!(&env, DonationError::InvalidAmount);
-        }
-        let admin: Address = match env.storage().instance().get(&ADMIN_KEY) {
-            Some(a) => a,
-            None => soroban_sdk::panic_with_error!(&env, DonationError::NotInitialized),
-        };
-        admin.require_auth();
-        env.storage().instance().set(&MAX_DONATION_KEY, &max_amount);
-        extend_instance_ttl(&env);
+        Self::require_single_admin_mode(
+            &env,
+            "multi-sig required: use propose_admin_action to change the maximum donation",
+        );
+        Self::apply_max_donation(&env, max_amount);
     }
 
     /// Returns the currently configured maximum donation amount (0 if unconstrained).
     pub fn get_max_donation(env: Env) -> i128 {
         env.storage().instance().get(&MAX_DONATION_KEY).unwrap_or(0)
+    }
+
+    /// Shared min-donation mutation for both the legacy direct setter and
+    /// the `SetMinDonation` `AdminAction` executor arm. Validates `min <=
+    /// max` whenever both are non-zero (#284), so neither path can leave the
+    /// guardrails in a self-contradictory state where no donation could
+    /// ever pass both checks.
+    fn apply_min_donation(env: &Env, min_amount: i128) {
+        assert!(min_amount >= 0, "minimum donation must be non-negative");
+        let max_amount: i128 = env.storage().instance().get(&MAX_DONATION_KEY).unwrap_or(0);
+        assert!(
+            max_amount == 0 || min_amount <= max_amount,
+            "minimum donation cannot exceed the maximum donation"
+        );
+        let old_min: i128 = env.storage().instance().get(&MIN_DONATION_KEY).unwrap_or(0);
+        env.storage().instance().set(&MIN_DONATION_KEY, &min_amount);
+        extend_instance_ttl(env);
+        MinDonationChangedEvent {
+            old_min,
+            new_min: min_amount,
+        }
+        .publish(env);
+    }
+
+    /// Shared max-donation mutation for both the legacy direct setter and
+    /// the `SetMaxDonation` `AdminAction` executor arm. See
+    /// `apply_min_donation` for the `min <= max` invariant this also
+    /// enforces.
+    fn apply_max_donation(env: &Env, max_amount: i128) {
+        assert!(max_amount >= 0, "maximum donation must be non-negative");
+        let min_amount: i128 = env.storage().instance().get(&MIN_DONATION_KEY).unwrap_or(0);
+        assert!(
+            max_amount == 0 || min_amount <= max_amount,
+            "maximum donation cannot be less than the minimum donation"
+        );
+        let old_max: i128 = env.storage().instance().get(&MAX_DONATION_KEY).unwrap_or(0);
+        env.storage().instance().set(&MAX_DONATION_KEY, &max_amount);
+        extend_instance_ttl(env);
+        MaxDonationChangedEvent {
+            old_max,
+            new_max: max_amount,
+        }
+        .publish(env);
     }
 
     /// Transfer `amount` of `token` from `donor` to `creator`, record the
@@ -811,6 +986,8 @@ impl DonationContract {
         };
         env.storage().persistent().set(&SUB_COUNTER, &next_id);
 
+        Self::adjust_committed_amount(&env, &supporter, &token, amount);
+
         SubscribedEvent {
             supporter,
             creator,
@@ -829,6 +1006,27 @@ impl DonationContract {
     /// allowance the supporter granted this contract, then records and
     /// reports it exactly like a one-off `donate`. Callable only by the
     /// authorized executor (see `set_executor`).
+    ///
+    /// # Observability of a failed charge (#283)
+    ///
+    /// On `InsufficientAllowance`/`InsufficientBalance`, this publishes
+    /// [`SubscriptionChargeFailedEvent`] and then returns `Err(ChargeError)`.
+    /// Soroban rolls back *all* state changes and events from an invocation
+    /// that returns an `Err` (confirmed by this crate's test snapshots,
+    /// which mark that event `failed_call: true`), so the event is only
+    /// ever visible in a local simulation's diagnostics, never to an
+    /// indexer reading finalized ledgers. Rather than changing this
+    /// function's return type to a non-reverting `Ok(Failed(reason))` variant
+    /// (a breaking signature change for every caller and the ~15 existing
+    /// tests asserting `Err(ChargeError::...)` via `try_charge_subscription`),
+    /// the chosen fix keeps the `Err` return and has the backend
+    /// (`subscriptionExecutor.ts`) decode the same `ChargeError` discriminant
+    /// two other ways that *do* survive: directly from a simulation-time
+    /// rejection's error string (`Error(Contract, #<code>)`), and from a
+    /// submitted-but-reverted transaction's `diagnosticEventsXdr` (see
+    /// `decodeChargeErrorReasonFromDiagnostics`). Both paths yield the exact
+    /// same `InsufficientAllowance` vs `InsufficientBalance` distinction this
+    /// event would have, without touching the Rust return type.
     pub fn charge_subscription(
         env: Env,
         executor: Address,
@@ -965,7 +1163,23 @@ impl DonationContract {
         Ok(donation)
     }
 
-    /// Cancels a subscription and revokes allowance.
+    /// Cancels a subscription and reduces the supporter's SAC allowance to
+    /// this contract by exactly this subscription's committed amount.
+    ///
+    /// # Allowance semantics
+    ///
+    /// SAC allowances are keyed by `(owner, spender)`, not per subscription,
+    /// so a supporter with two active subscriptions in the same token shares
+    /// one allowance between them. Zeroing that allowance on cancellation
+    /// (the old behavior) would silently break every *other* active
+    /// subscription in that token until the supporter noticed and
+    /// re-approved. Instead, this contract tracks each supporter's total
+    /// committed amount per token (`COMMITTED_KEY`, updated by `subscribe`
+    /// and here) and only decrements the live allowance by this
+    /// subscription's own `amount`, clamped at zero so a stale/lower
+    /// allowance (e.g. partially drawn down since) never underflows. The
+    /// remaining allowance is left untouched and continues to cover the
+    /// supporter's other active subscriptions in the same token.
     pub fn cancel_subscription(env: Env, supporter: Address, subscription_id: u64) {
         supporter.require_auth();
 
@@ -980,6 +1194,10 @@ impl DonationContract {
         if subscription.supporter != supporter {
             soroban_sdk::panic_with_error!(&env, DonationError::Unauthorized);
         }
+        if !subscription.active {
+            soroban_sdk::panic_with_error!(&env, DonationError::SubscriptionNotActive);
+        }
+        extend_instance_ttl(&env);
 
         subscription.active = false;
         env.storage()
@@ -991,8 +1209,35 @@ impl DonationContract {
             subscription.interval_secs,
         );
 
+        Self::adjust_committed_amount(&env, &supporter, &subscription.token, -subscription.amount);
+
         let token_client = token::Client::new(&env, &subscription.token);
-        token_client.approve(&supporter, &env.current_contract_address(), &0, &0);
+        let current_allowance = token_client.allowance(&supporter, &env.current_contract_address());
+        let reduced_allowance = (current_allowance - subscription.amount).max(0);
+        // The SAC `TokenInterface` only exposes the allowance *amount*, not
+        // its current `live_until_ledger`, so the original expiration cannot
+        // be read back and preserved exactly on a partial reduction. When
+        // fully zeroing (no amount left to protect), the expiration argument
+        // is moot and 0 is passed, matching the old zeroing behavior. When a
+        // positive amount remains — i.e. other active subscriptions on this
+        // token still need it — this extends the allowance far enough to
+        // outlive this subscription's own remaining committed siblings,
+        // using the same per-subscription TTL budget `subscribe` already
+        // uses for the subscription entry itself (comfortably longer than
+        // one more charge interval). This can lengthen an allowance's
+        // remaining lifetime but never shortens one that is still needed.
+        let expiration_ledger = if reduced_allowance > 0 {
+            let bump_ledgers = common::subscription_bump_amount(subscription.interval_secs);
+            env.ledger().sequence().saturating_add(bump_ledgers)
+        } else {
+            0
+        };
+        token_client.approve(
+            &supporter,
+            &env.current_contract_address(),
+            &reduced_allowance,
+            &expiration_ledger,
+        );
 
         SubscriptionCancelledEvent {
             supporter,
@@ -1000,6 +1245,29 @@ impl DonationContract {
             subscription_id,
         }
         .publish(&env);
+    }
+
+    /// Adjusts the supporter's tracked committed-amount counter for `token`
+    /// by `delta` (positive on `subscribe`, negative on `cancel_subscription`),
+    /// clamped at zero. See `COMMITTED_KEY` and `cancel_subscription`'s doc
+    /// comment for why this tracking exists.
+    fn adjust_committed_amount(env: &Env, supporter: &Address, token: &Address, delta: i128) {
+        let key = (COMMITTED_KEY, supporter.clone(), token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        let updated = (current + delta).max(0);
+        env.storage().persistent().set(&key, &updated);
+        extend_persistent_ttl(env, &key);
+    }
+
+    /// Returns the supporter's currently committed amount (sum of active
+    /// subscription amounts) for `token`. Used by tests and available to the
+    /// frontend/backend to compute how much allowance headroom is still
+    /// needed before approving a new subscription.
+    pub fn get_committed_amount(env: Env, supporter: Address, token: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&(COMMITTED_KEY, supporter, token))
+            .unwrap_or(0)
     }
 
     /// Permissionless keep-alive for a subscription entry. Intervals longer
@@ -1648,6 +1916,19 @@ mod tests {
     }
 
     #[test]
+    fn test_charge_error_discriminants_are_stable_for_backend_decoding() {
+        // #283: the backend decodes these exact numeric codes out of
+        // `Error(Contract, #<code>)` text in a simulation error or a failed
+        // transaction's diagnostic events (see subscriptionExecutor.ts's
+        // `decodeChargeErrorReason`/`decodeChargeErrorReasonFromDiagnostics`).
+        // Changing either discriminant without updating that backend mapping
+        // would silently break the allowance-vs-balance distinction, so this
+        // pins them down as a regression guard.
+        assert_eq!(ChargeError::InsufficientAllowance as u32, 1);
+        assert_eq!(ChargeError::InsufficientBalance as u32, 2);
+    }
+
+    #[test]
     fn test_charge_subscription_insufficient_balance() {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
@@ -1880,6 +2161,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_cancel_subscription_does_not_break_other_active_subscriptions_same_token() {
+        // #282: supporter subscribes to two creators in the same token;
+        // cancelling one must not zero out the allowance backing the other.
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (admin, donation_client, _registry_client) = setup(&env);
+        let supporter = Address::generate(&env);
+        let creator_a = Address::generate(&env);
+        let creator_b = Address::generate(&env);
+        let executor = Address::generate(&env);
+        let token_address = create_token_contract(&env, &admin);
+        donation_client.add_allowed_token(&token_address);
+        StellarAssetClient::new(&env, &token_address).mint(&supporter, &10_000);
+        donation_client.set_executor(&executor);
+
+        env.ledger().with_mut(|li| li.timestamp = 1_000);
+        let id_a = donation_client.subscribe(&supporter, &creator_a, &token_address, &500, &1_000);
+        let id_b = donation_client.subscribe(&supporter, &creator_b, &token_address, &300, &1_000);
+
+        // One shared allowance covering both subscriptions' combined need.
+        let token_client = token::Client::new(&env, &token_address);
+        token_client.approve(&supporter, &donation_client.address, &800, &1_000_000);
+
+        donation_client.cancel_subscription(&supporter, &id_a);
+
+        // The shared allowance should be reduced only by subscription A's
+        // amount (500), leaving 300 — exactly what B still needs — instead
+        // of being zeroed out.
+        assert_eq!(
+            token_client.allowance(&supporter, &donation_client.address),
+            300
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 2_000);
+        let donation = donation_client.charge_subscription(&executor, &id_b);
+        assert_eq!(donation.amount, 300);
+        assert_eq!(token_client.balance(&creator_b), 300);
+    }
+
+    #[test]
+    fn test_cancel_subscription_zeroes_allowance_when_no_siblings_remain() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (_admin, donation_client, supporter, _creator, _executor, token_address, id) =
+            subscription_fixture(&env, 10_000, 500);
+
+        donation_client.cancel_subscription(&supporter, &id);
+
+        let token_client = token::Client::new(&env, &token_address);
+        assert_eq!(
+            token_client.allowance(&supporter, &donation_client.address),
+            0
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_cancel_subscription_rejects_double_cancel() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (_admin, donation_client, supporter, _creator, _executor, _token_address, id) =
+            subscription_fixture(&env, 10_000, 500);
+
+        donation_client.cancel_subscription(&supporter, &id);
+        donation_client.cancel_subscription(&supporter, &id);
+    }
+
     // =========================================================================
     // Property-Based & Invariant Fuzz Tests (#46)
     // =========================================================================
@@ -2007,6 +2356,185 @@ mod tests {
             donation_client.emergency_pause(&_unauthorized_caller);
         }))
         .is_err());
+    }
+
+    // =========================================================================
+    // #284: multisig gating for the token allowlist and donation limits
+    // =========================================================================
+
+    #[test]
+    #[should_panic(expected = "multi-sig required")]
+    fn test_add_allowed_token_rejects_direct_call_under_multisig() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let admin3 = Address::generate(&env);
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        admins.push_back(admin3.clone());
+        // 2-of-3 threshold: a single admin must not be able to bypass it.
+        let (donation_client, _registry_client) = deploy_pair(&env, admins, 2, 0);
+
+        donation_client.add_allowed_token(&Address::generate(&env));
+    }
+
+    #[test]
+    #[should_panic(expected = "multi-sig required")]
+    fn test_set_max_donation_rejects_direct_call_under_multisig() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        let (donation_client, _registry_client) = deploy_pair(&env, admins, 2, 0);
+
+        donation_client.set_max_donation(&1);
+    }
+
+    #[test]
+    fn test_add_allowed_token_via_multisig_proposal_succeeds() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        let (donation_client, _registry_client) = deploy_pair(&env, admins, 2, 0);
+
+        let token = Address::generate(&env);
+        assert!(!donation_client.is_token_allowed(&token));
+
+        let prop_id = donation_client
+            .propose_admin_action(&admin1, &AdminAction::AddAllowedToken(token.clone()));
+        donation_client.approve_admin_action(&admin2, &prop_id);
+        donation_client.execute_admin_action(&admin1, &prop_id);
+
+        assert!(donation_client.is_token_allowed(&token));
+    }
+
+    #[test]
+    fn test_set_min_and_max_donation_via_multisig_proposal() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        let (donation_client, _registry_client) = deploy_pair(&env, admins, 2, 0);
+
+        let max_prop =
+            donation_client.propose_admin_action(&admin1, &AdminAction::SetMaxDonation(1_000));
+        donation_client.approve_admin_action(&admin2, &max_prop);
+        donation_client.execute_admin_action(&admin1, &max_prop);
+        assert_eq!(donation_client.get_max_donation(), 1_000);
+
+        let min_prop =
+            donation_client.propose_admin_action(&admin1, &AdminAction::SetMinDonation(10));
+        donation_client.approve_admin_action(&admin2, &min_prop);
+        donation_client.execute_admin_action(&admin1, &min_prop);
+        assert_eq!(donation_client.get_min_donation(), 10);
+    }
+
+    #[test]
+    #[should_panic(expected = "minimum donation cannot exceed the maximum donation")]
+    fn test_set_min_donation_rejects_min_above_existing_max() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (_admin, donation_client, _registry_client) = setup(&env);
+
+        donation_client.set_max_donation(&100);
+        donation_client.set_min_donation(&200);
+    }
+
+    #[test]
+    #[should_panic(expected = "maximum donation cannot be less than the minimum donation")]
+    fn test_set_max_donation_rejects_max_below_existing_min() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+        let (_admin, donation_client, _registry_client) = setup(&env);
+
+        donation_client.set_min_donation(&200);
+        donation_client.set_max_donation(&100);
+    }
+
+    #[test]
+    fn test_remove_admin_revokes_primary_admin_privileges() {
+        // #284: a removed primary admin must lose ADMIN_KEY-gated powers,
+        // not just their seat in ADMINS_KEY.
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let admin3 = Address::generate(&env);
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        admins.push_back(admin3.clone());
+        // 2-of-3 threshold, dropping to 2 admins (still threshold 2) after removal.
+        let (donation_client, _registry_client) = deploy_pair(&env, admins, 2, 0);
+
+        // Remove admin1, the primary admin set at deploy time.
+        let prop_id = donation_client
+            .propose_admin_action(&admin2, &AdminAction::RemoveAdmin(admin1.clone()));
+        donation_client.approve_admin_action(&admin3, &prop_id);
+        donation_client.execute_admin_action(&admin2, &prop_id);
+
+        assert!(!donation_client.is_admin(&admin1));
+
+        // admin1 is no longer an admin at all, so even single-admin-mode
+        // shortcuts (which still require threshold == 1, not met here) must
+        // reject them — confirming ADMIN_KEY no longer resolves to a
+        // removed/compromised key's privileges.
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            donation_client.set_executor(&Address::generate(&env));
+        }))
+        .is_err());
+    }
+
+    #[test]
+    fn test_remove_primary_admin_reassigns_admin_key_on_single_admin_deployment() {
+        // On a deployment that drops back to threshold == 1, ADMIN_KEY must
+        // be reassigned to the new primary admin, not left pointing at the
+        // removed one, so the legacy single-admin shortcuts keep working.
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin1 = Address::generate(&env);
+        let admin2 = Address::generate(&env);
+        let mut admins = Vec::new(&env);
+        admins.push_back(admin1.clone());
+        admins.push_back(admin2.clone());
+        let (donation_client, _registry_client) = deploy_pair(&env, admins, 2, 0);
+
+        // Lower the threshold to 1 first so removing admin1 leaves a valid
+        // 1-of-1 deployment.
+        let threshold_prop =
+            donation_client.propose_admin_action(&admin1, &AdminAction::SetThreshold(1));
+        donation_client.approve_admin_action(&admin2, &threshold_prop);
+        donation_client.execute_admin_action(&admin1, &threshold_prop);
+
+        let remove_prop = donation_client
+            .propose_admin_action(&admin2, &AdminAction::RemoveAdmin(admin1.clone()));
+        donation_client.execute_admin_action(&admin2, &remove_prop);
+
+        assert!(!donation_client.is_admin(&admin1));
+        assert!(donation_client.is_admin(&admin2));
+
+        // admin2 is now the sole admin and threshold is 1, so the legacy
+        // direct setter must work for admin2 — proving ADMIN_KEY was
+        // reassigned away from the removed admin1.
+        donation_client.add_allowed_token(&Address::generate(&env));
     }
 
     #[test]

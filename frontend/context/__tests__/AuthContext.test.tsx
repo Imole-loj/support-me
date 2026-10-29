@@ -49,30 +49,21 @@ describe('AuthContext', () => {
     expect(result.current.user).toEqual({ id: 1, walletAddress: 'GABC' });
   });
 
-  it('restores a session whose stored JWT is still valid', async () => {
-    const token = makeJwt({ exp: Math.floor(Date.now() / 1000) + 60 * 60 });
-    localStorage.setItem('authToken', token);
+  it('syncs the session when another tab updates localStorage', async () => {
+    localStorage.setItem('authToken', 'saved-token');
     localStorage.setItem('authUser', JSON.stringify({ id: 1, walletAddress: 'GABC' }));
 
     const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.token).toBe(token);
-    expect(result.current.user).toEqual({ id: 1, walletAddress: 'GABC' });
-  });
+    localStorage.setItem('authToken', 'other-tab-token');
+    localStorage.setItem('authUser', JSON.stringify({ id: 9, walletAddress: 'GXYZ' }));
+    window.dispatchEvent(new StorageEvent('storage', { key: 'authToken', newValue: 'other-tab-token' }));
 
-  it('drops an expired stored token instead of restoring the session (#246)', async () => {
-    const expiredToken = makeJwt({ exp: Math.floor(Date.now() / 1000) - 60 });
-    localStorage.setItem('authToken', expiredToken);
-    localStorage.setItem('authUser', JSON.stringify({ id: 1, walletAddress: 'GABC' }));
-
-    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
-    await waitFor(() => expect(result.current.loading).toBe(false));
-
-    expect(result.current.token).toBeNull();
-    expect(result.current.user).toBeNull();
-    expect(localStorage.getItem('authToken')).toBeNull();
-    expect(localStorage.getItem('authUser')).toBeNull();
+    await waitFor(() => {
+      expect(result.current.token).toBe('other-tab-token');
+      expect(result.current.user).toEqual({ id: 9, walletAddress: 'GXYZ' });
+    });
   });
 
   it('logs in with a wallet and persists the session', async () => {
@@ -104,7 +95,8 @@ describe('AuthContext', () => {
     });
     expect(result.current.token).toBe('jwt-token');
     expect(result.current.user).toEqual({ id: 1, walletAddress: 'GABC' });
-    expect(localStorage.getItem('authToken')).toBe('jwt-token');
+    expect(localStorage.getItem('authToken')).toBeNull();
+    expect(localStorage.getItem('authUser')).toBeTruthy();
   });
 
   it('throws when the sign-in challenge fails', async () => {
@@ -182,7 +174,8 @@ describe('AuthContext', () => {
         hasProfile: false,
       });
       expect(result.current.token).toBe('twitter-jwt');
-      expect(localStorage.getItem('authToken')).toBe('twitter-jwt');
+      expect(localStorage.getItem('authToken')).toBeNull();
+      expect(localStorage.getItem('authUser')).toBeTruthy();
     });
 
     it('throws when the state is invalid or expired', async () => {
@@ -260,7 +253,8 @@ describe('AuthContext', () => {
         username: 'you',
       });
       expect(result.current.token).toBe('magic-link-jwt');
-      expect(localStorage.getItem('authToken')).toBe('magic-link-jwt');
+      expect(localStorage.getItem('authToken')).toBeNull();
+      expect(localStorage.getItem('authUser')).toBeTruthy();
     });
 
     it('throws when the token has already been used', async () => {

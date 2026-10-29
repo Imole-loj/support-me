@@ -4,9 +4,15 @@ import userEvent from '@testing-library/user-event';
 import SubscriptionsPage from '@/app/app/subscriptions/page';
 import { cancelSubscription } from '@/lib/contract';
 import { fetchWithRetry } from '@/lib/network';
+import { notify } from '@/lib/notify';
+
+const mockAuthState = vi.hoisted(() => ({
+  user: { id: 1, walletAddress: 'GSUPPORTER' as string | null } as { id: number; walletAddress: string | null } | null,
+  token: 'tok' as string | null,
+}));
 
 vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 1, walletAddress: 'GSUPPORTER' }, token: 'tok' }),
+  useAuth: () => mockAuthState,
 }));
 vi.mock('@/components/ProtectedRoute', () => ({
   ProtectedRoute: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -33,9 +39,12 @@ const subscription = {
   creator: { username: 'alice', displayName: 'Alice' },
 };
 
-describe('SubscriptionsPage cancel confirmation', () => {
+describe('SubscriptionsPage', () => {
   beforeEach(() => {
+    mockAuthState.user = { id: 1, walletAddress: 'GSUPPORTER' };
+    mockAuthState.token = 'tok';
     vi.mocked(cancelSubscription).mockReset().mockResolvedValue(undefined as never);
+    vi.mocked(notify.error).mockReset();
     vi.mocked(fetchWithRetry).mockReset().mockImplementation(async (url) =>
       String(url).includes('/cancel')
         ? new Response('{}', { status: 200 })
@@ -43,30 +52,83 @@ describe('SubscriptionsPage cancel confirmation', () => {
     );
   });
 
-  it('asks before cancelling and does nothing when the supporter keeps it', async () => {
-    const user = userEvent.setup();
-    render(<SubscriptionsPage />);
+  describe('authenticated subscriptions fetch (#234)', () => {
+    it('sends the Authorization header with bearer token and renders the subscription list', async () => {
+      render(<SubscriptionsPage />);
 
-    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
-    const dialog = screen.getByRole('alertdialog', { name: 'Cancel your donation to Alice?' });
-    expect(dialog).toHaveAccessibleDescription(/stop sending 5 XLM weekly/i);
+      await waitFor(() => {
+        expect(fetchWithRetry).toHaveBeenCalledWith(
+          expect.stringContaining('/api/subscriptions?supporterAddress=GSUPPORTER'),
+          expect.objectContaining({
+            headers: { Authorization: 'Bearer tok' },
+          })
+        );
+      });
 
-    await user.click(within(dialog).getByRole('button', { name: 'Keep it' }));
+      expect(await screen.findByText('Alice')).toBeInTheDocument();
+      expect(screen.getByText(/5 XLM/)).toBeInTheDocument();
+    });
 
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
-    expect(cancelSubscription).not.toHaveBeenCalled();
+    it('shows a specific session expired error when receiving 401', async () => {
+      vi.mocked(fetchWithRetry).mockResolvedValueOnce(new Response('Unauthorized', { status: 401 }));
+      render(<SubscriptionsPage />);
+
+      await waitFor(() => {
+        expect(notify.error).toHaveBeenCalledWith(
+          expect.stringMatching(/session expired, sign in again/i)
+        );
+      });
+    });
   });
 
-  it('cancels on-chain once confirmed', async () => {
-    const user = userEvent.setup();
-    render(<SubscriptionsPage />);
+  describe('wallet-less user handling (#235)', () => {
+    it('renders empty state with link to settings, without permanent skeleton or fetch call', async () => {
+      mockAuthState.user = { id: 2, walletAddress: null };
 
-    await user.click(await screen.findByRole('button', { name: 'Cancel' }));
-    await user.click(screen.getByRole('button', { name: 'Cancel donation' }));
+      render(<SubscriptionsPage />);
 
-    await waitFor(() =>
-      expect(cancelSubscription).toHaveBeenCalledWith({ supporterAddress: 'GSUPPORTER', subscriptionId: 42 })
-    );
-    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+      expect(
+        await screen.findByText(/connect a wallet to start or manage recurring donations/i)
+      ).toBeInTheDocument();
+
+      const settingsLink = screen.getByRole('link', { name: /settings/i });
+      expect(settingsLink).toHaveAttribute('href', '/settings');
+
+      expect(screen.queryByTestId('subscriptions-skeleton')).not.toBeInTheDocument();
+      expect(fetchWithRetry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancel confirmation (#236)', () => {
+    it('asks before cancelling and does nothing when the supporter keeps it', async () => {
+      const user = userEvent.setup();
+      render(<SubscriptionsPage />);
+
+      const cancelButton = await screen.findByRole('button', { name: /cancel donation to alice/i });
+      expect(cancelButton).toHaveAttribute('aria-label', 'Cancel donation to Alice');
+
+      await user.click(cancelButton);
+      const dialog = screen.getByRole('alertdialog', { name: 'Cancel your donation to Alice?' });
+      expect(dialog).toHaveAccessibleDescription(/stop sending 5 XLM weekly/i);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Keep it' }));
+
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(cancelSubscription).not.toHaveBeenCalled();
+    });
+
+    it('cancels on-chain once confirmed', async () => {
+      const user = userEvent.setup();
+      render(<SubscriptionsPage />);
+
+      const cancelButton = await screen.findByRole('button', { name: /cancel donation to alice/i });
+      await user.click(cancelButton);
+      await user.click(screen.getByRole('button', { name: 'Cancel donation' }));
+
+      await waitFor(() =>
+        expect(cancelSubscription).toHaveBeenCalledWith({ supporterAddress: 'GSUPPORTER', subscriptionId: 42 })
+      );
+      expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    });
   });
 });

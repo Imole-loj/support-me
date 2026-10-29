@@ -21,6 +21,20 @@ after a change.
 | `CORS_ALLOWED_ORIGINS` | Optional; set for deployed browser frontends. | Empty. Comma-separated exact origins. Outside production, `https://localhost:3000`, `https://127.0.0.1:3000`, `http://localhost:3000` and `http://127.0.0.1:3000` are added automatically (the frontend's `npm run dev` serves HTTPS; `npm run dev:http` and Playwright use HTTP). Production allows no browser origins unless configured. |
 | `TRUST_PROXY` | Optional; set when the API is behind a trusted reverse proxy. | Unset leaves Express's default. Set to the number of proxy hops (commonly `1` on Railway) so IP-based limits see the client address. |
 
+## Profile images and social links
+
+| Variable | Required? | Default / behavior |
+| --- | --- | --- |
+| `CLOUDINARY_CLOUD_NAME` | Required to save an avatar URL. | Unset rejects avatar writes. Must match the frontend upload signer's cloud name. Only HTTPS URLs on `res.cloudinary.com` whose first path segment is this exact cloud name are accepted. The backend does not need the Cloudinary API key or secret. |
+
+Creation and update apply the same avatar policy. Other profile edits continue
+to work without Cloudinary configured. Social links accept only absolute HTTP(S)
+URLs without credentials, or handles expanded for the known platform keys:
+`twitter`, `instagram`, `youtube`, `tiktok`, `github`, `linkedin`, `telegram`, and
+`website`. Website entries require a complete URL; LinkedIn handles use
+`in/username`. Unknown keys and non-HTTP schemes are rejected with HTTP 400.
+Send an empty object to clear all social links.
+
 ## Public API rate limits
 
 All values must be positive integers. Window values are milliseconds. Limits

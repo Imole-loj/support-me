@@ -40,6 +40,33 @@ It is built with TypeScript, Express, and Prisma, and is designed to support cre
    http://localhost:4000/health
    ```
 
+## Postgres integration tests
+
+With the backend dependencies and generated Prisma client already available,
+and a running local/test PostgreSQL database, run from `backend/`:
+
+```bash
+DATABASE_URL='postgresql://postgres:postgres@localhost:5432/supportme' npm run test:integration
+```
+
+The database role needs `CREATEDB` and permission to drop the database it
+creates. Point the command at a local/test Postgres instance, never production.
+The runner creates a randomly named temporary database and a fresh schema for
+each invocation, runs `prisma migrate deploy` against it, runs the separate
+Jest integration project serially, and drops the temporary database (including
+its schema) in a `finally` block even when a test fails. Each test truncates
+only tables in that schema; the supplied database is used only as the
+administrative connection. A separate database avoids cross-schema catalog
+guards in historical migrations interfering with setup. If the process is
+forcibly killed, its `integration_<uuid>` database may need manual removal.
+
+This suite uses real Prisma transactions and Postgres constraints, covering
+donation HTTP retries, concurrent idempotency keys, key expiration, listener
+event replay and goal progress, and all three on-chain identity constraints.
+Only outbound donation notifications are mocked. The regular `npm test`
+suite remains independent of Postgres. CI runs both suites using its Postgres
+service, after deploying migrations.
+
 ## Seeding demo data
 
 For local and testnet demos, populate the database with creators, goals,
@@ -71,6 +98,14 @@ Donation history responses contain `items` and `pagination`. `limit` defaults to
 20 and is capped at 100. Use `page` to request older pages. Recording the same
 on-chain donation again with the same `Idempotency-Key` returns the original
 donation without inserting another row. Keys are retained for 24 hours.
+
+Creator payout wallets are nullable. A profile created through Twitter or a
+magic link can exist before its owner connects a wallet; it remains accessible
+by username and explains that tips are unavailable. Discover/search and creator
+leaderboards exclude these profiles until a payout wallet is connected. The
+creation endpoint accepts legacy empty-string wallets but stores them as null;
+the payout-wallet migration converts existing empty strings and prevents new
+ones. Connected wallets still require ownership proof and remain unique.
 
 `GET /health` reports `status: "ok"` when the process and Soroban RPC are
 available, and `status: "degraded"` with `dependencies.sorobanRpc.status:

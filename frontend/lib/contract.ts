@@ -355,6 +355,51 @@ async function callContract({
   throw new DonationError("network", parsedMsg, getResponse);
 }
 
+/**
+ * Reads a SAC token's current allowance from `owner` to the donation
+ * contract via a read-only simulation (no signature, no submission).
+ *
+ * Used by `approveAllowance` (#282) to approve the *combined* need of the
+ * supporter's existing allowance plus the new subscription, instead of
+ * replacing it outright: SAC allowances are keyed by `(owner, spender)`,
+ * shared across every subscription the supporter has in that token, so a
+ * plain `approve(newAmount)` would silently under-fund any subscription
+ * approved earlier. Returns `0n` if the simulation fails for any reason
+ * (e.g. the account doesn't exist yet) — a fresh supporter has no existing
+ * allowance to preserve, so falling back to "nothing to add" is correct,
+ * and the subsequent `approve` call will surface a clearer error if the
+ * account truly can't transact.
+ */
+async function getCurrentAllowance(tokenId: string, ownerAddress: string): Promise<bigint> {
+  if (!CONTRACT_ID) return BigInt(0);
+  try {
+    const account = await server.getAccount(ownerAddress);
+    const contract = new StellarSdk.Contract(tokenId);
+    const tx = new StellarSdk.TransactionBuilder(account, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        contract.call(
+          'allowance',
+          StellarSdk.nativeToScVal(ownerAddress, { type: 'address' }),
+          StellarSdk.nativeToScVal(CONTRACT_ID, { type: 'address' })
+        )
+      )
+      .setTimeout(60)
+      .build();
+
+    const simulated = await server.simulateTransaction(tx);
+    if (StellarSdk.rpc.Api.isSimulationError(simulated) || !simulated.result?.retval) {
+      return BigInt(0);
+    }
+    const value = StellarSdk.scValToNative(simulated.result.retval);
+    return BigInt(value);
+  } catch {
+    return BigInt(0);
+  }
+}
+
 interface MockContract {
   sendDonation?: (params: SendDonationParams) => Promise<{ hash: string }>;
   approveAllowance?: (
@@ -527,9 +572,16 @@ export async function approveAllowance({
   const periodsApproved = Math.max(1, Math.min(periodsToApprove, maxPeriods));
 
   const expirationLedger =
-    latestLedger +
-    Math.ceil((intervalSecs * periodsApproved) / APPROX_SECONDS_PER_LEDGER);
-  const amountStroops = toStroops(amount, periodsApproved);
+    latestLedger + Math.ceil((intervalSecs * periodsApproved) / APPROX_SECONDS_PER_LEDGER);
+  const newSubscriptionNeed = toStroops(amount, periodsApproved);
+
+  // #282: SAC allowances are keyed by (owner, spender), shared across every
+  // subscription the supporter has in this token — approving only this new
+  // subscription's need would REPLACE the shared allowance and under-fund
+  // whatever earlier subscriptions were already drawing on it. Read the
+  // current allowance first and approve the combined total instead.
+  const currentAllowance = await getCurrentAllowance(tokenId, supporterAddress);
+  const amountStroops = currentAllowance + newSubscriptionNeed;
 
   const { hash } = await callContract({
     contractId: tokenId,
@@ -621,8 +673,13 @@ export interface CancelSubscriptionParams {
 
 /**
  * Cancels a recurring donation via the donation contract's
- * `cancel_subscription`, which also zeroes the remaining on-chain
- * allowance in the same transaction.
+ * `cancel_subscription`. As of #282, this no longer zeroes the supporter's
+ * SAC allowance to the donation contract outright — that allowance is
+ * shared across every subscription the supporter has in the same token, so
+ * zeroing it would silently break any other active subscription in that
+ * token. Instead, the contract reduces the allowance by only this
+ * subscription's own committed amount (clamped at zero), leaving whatever
+ * remainder other active subscriptions still need untouched.
  */
 export async function cancelSubscription({
   supporterAddress,

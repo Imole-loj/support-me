@@ -18,11 +18,13 @@ jest.mock("../../services/networkReset", () => ({
 }));
 
 import request from "supertest";
-import app from "../../app";
+import app, { sorobanRpcCache, healthIpLimiter } from "../../app";
 import { executorHealth } from "../../services/executorHealth";
 
 beforeEach(() => {
   executorHealth.reset();
+  sorobanRpcCache.clear();
+  healthIpLimiter.clear();
 });
 
 describe("GET /health", () => {
@@ -90,6 +92,43 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("unhealthy");
     expect(res.body.dependencies.subscriptionExecutor.status).toBe("unhealthy");
+  });
+
+  it("reuses one RPC probe for repeated rapid /health requests inside the cache window (#373)", async () => {
+    const { checkSorobanRpc } = await import("../../services/sorobanHealth");
+    (checkSorobanRpc as jest.Mock).mockClear();
+
+    for (let i = 0; i < 5; i++) {
+      const res = await request(app).get("/health");
+      expect(res.status).toBe(200);
+      expect(res.body.dependencies.sorobanRpc.status).toBe("ok");
+    }
+
+    expect(checkSorobanRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("rate limits rapid requests to /health beyond the configured cap (#373)", async () => {
+    for (let i = 0; i < 60; i++) {
+      const res = await request(app).get("/health");
+      expect(res.status).toBe(200);
+    }
+
+    const res = await request(app).get("/health");
+    expect(res.status).toBe(429);
+    expect(res.body.code).toBe("TOO_MANY_REQUESTS");
+  });
+});
+
+describe("GET /health/live (#373)", () => {
+  it("responds with 200 ok without calling Soroban RPC or touching dependencies", async () => {
+    const { checkSorobanRpc } = await import("../../services/sorobanHealth");
+    (checkSorobanRpc as jest.Mock).mockClear();
+
+    const res = await request(app).get("/health/live");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: "ok" });
+    expect(checkSorobanRpc).not.toHaveBeenCalled();
   });
 });
 

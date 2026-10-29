@@ -7,10 +7,10 @@ does not filter by changed paths, so all jobs run for each pull request.
 
 ## Prerequisites
 
-- Node.js 20 (see [`.nvmrc`](.nvmrc), the version CI uses via
+- Node.js 24 (see [`.nvmrc`](.nvmrc), the version CI uses via
   `node-version-file`). npm 11+ for the frontend (`npm install -g npm@11` —
   its lockfile needs npm 11's resolver, which is why CI force-installs it
-  before `npm ci`) and npm 10+ for the backend (no upgrade needed; Node 20's
+  before `npm ci`) and npm 10+ for the backend (no upgrade needed; Node 24's
   bundled npm already satisfies this).
 - Rust stable and `rustup` for the contract workspace. CI installs the
   `wasm32v1-none` target for the contract build.

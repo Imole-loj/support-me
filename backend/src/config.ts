@@ -27,6 +27,7 @@ export const config = {
   get executorSecretKey() { return process.env.EXECUTOR_SECRET_KEY?.trim() || ""; },
   get databaseUrl() { return process.env.DATABASE_URL?.trim() || ""; },
   get jwtSecret() { return process.env.JWT_SECRET?.trim() || ""; },
+  get cloudinaryCloudName() { return process.env.CLOUDINARY_CLOUD_NAME?.trim() || ""; },
 };
 
 export interface RateLimitConfig {
@@ -45,6 +46,10 @@ export interface RateLimitConfig {
     windowMs: number;
     ipMax: number;
     accountMax: number;
+  };
+  health: {
+    windowMs: number;
+    ipMax: number;
   };
 }
 
@@ -81,6 +86,10 @@ export function getRateLimitConfig(): RateLimitConfig {
       windowMs: positiveIntegerEnv("MAGIC_LINK_RATE_LIMIT_WINDOW_MS", 15 * 60_000),
       ipMax: positiveIntegerEnv("MAGIC_LINK_RATE_LIMIT_IP_MAX", 30),
       accountMax: positiveIntegerEnv("MAGIC_LINK_RATE_LIMIT_ACCOUNT_MAX", 5),
+    },
+    health: {
+      windowMs: positiveIntegerEnv("HEALTH_RATE_LIMIT_WINDOW_MS", 60_000),
+      ipMax: positiveIntegerEnv("HEALTH_RATE_LIMIT_IP_MAX", 60),
     },
   };
 }
